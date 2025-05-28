@@ -1,0 +1,35 @@
+name: Test
+
+on:
+  pull_request:
+    types: [review_requested, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: install dependencies
+        run: uv sync --locked --no-group dev
+
+      - name: test
+        run: uv run pytest
+
+      - name: Prune uv cache
+        run: uv cache prune --ci

@@ -1,0 +1,10 @@
+name: Auto Release on Pyproject Version Update
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  draft-release:
+    uses: alphaprime-dev/alpha-actions/.github/workflows/auto-release-on-uv-pyproject-version-update.yaml@main
+    secrets: inherit

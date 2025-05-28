@@ -1,0 +1,10 @@
+name: PR Version Labeler
+
+on:
+  pull_request:
+    types: [opened, edited]
+
+jobs:
+  version-labeler:
+    uses: alphaprime-dev/alpha-actions/.github/workflows/pr-version-labeler.yaml@main
+    secrets: inherit
