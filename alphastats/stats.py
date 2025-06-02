@@ -256,7 +256,7 @@ def _get_dt_column(returns: pl.LazyFrame) -> pl.Expr:
     if len(column_names) != 1:
         raise ValueError(f"Must have exactly one temporal column. Found {column_names}")
 
-    return DT_COLUMNS_SELECTOR
+    return pl.col(column_names[0])
 
 
 def _to_lazy(returns: pl.Series | pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
