@@ -1,10 +1,8 @@
 from typing import overload
 
 import polars as pl
-import polars.selectors as cs
 
-RETURNS_COLUMNS_SELECTOR = cs.numeric()
-DT_COLUMNS_SELECTOR = cs.temporal()
+from alphastats._utils import RETURNS_COLUMNS_SELECTOR, get_dt_column, to_lazy
 
 
 @overload
@@ -25,7 +23,7 @@ def comp(returns: pl.Series | pl.DataFrame | pl.LazyFrame) -> float | pl.DataFra
     Returns:
         float | pl.DataFrame: Compounded returns
     """
-    returns_ldf = _to_lazy(returns)
+    returns_ldf = to_lazy(returns)
 
     res = returns_ldf.select(_comp(RETURNS_COLUMNS_SELECTOR)).collect()
 
@@ -35,13 +33,9 @@ def comp(returns: pl.Series | pl.DataFrame | pl.LazyFrame) -> float | pl.DataFra
         return res
 
 
-def _comp(expr: pl.Expr) -> pl.Expr:
-    return (expr + 1).product() - 1
-
-
 def cagr(
     returns: pl.DataFrame | pl.LazyFrame,
-    rf: float = 0.0,
+    rf: float | None = None,
     compound: bool = True,
     periods: int = 252,
 ) -> pl.DataFrame:
@@ -61,15 +55,16 @@ def cagr(
     Returns:
         pl.DataFrame: CAGR%
     """
-    returns_ldf = _prepare_returns(_to_lazy(returns), rf)
-    dt_col = _get_dt_column(returns_ldf)
+    returns_ldf = to_lazy(returns)
 
+    excess_returns = _to_excess_returns(RETURNS_COLUMNS_SELECTOR, rf)
+    dt_col = get_dt_column(returns_ldf)
     n_years = (dt_col.last() - dt_col.first()).dt.total_days() / periods
 
     if compound:
-        expr = _comp(RETURNS_COLUMNS_SELECTOR).add(1).pow(1 / n_years).sub(1)
+        expr = _comp(excess_returns).add(1).pow(1 / n_years).sub(1)
     else:
-        expr = (RETURNS_COLUMNS_SELECTOR).sum().add(1).pow(1 / n_years).sub(1)
+        expr = (excess_returns).sum().add(1).pow(1 / n_years).sub(1)
 
     return returns_ldf.select(expr).collect()
 
@@ -94,7 +89,7 @@ def max_drawdown(returns: pl.Series | pl.DataFrame | pl.LazyFrame) -> float | pl
     Returns:
         float | pl.DataFrame: Maximum drawdown value(s)
     """
-    returns_ldf = _prepare_returns(_to_lazy(returns))
+    returns_ldf = to_lazy(returns)
 
     max_drawdown = _drawdowns(RETURNS_COLUMNS_SELECTOR).min()
 
@@ -128,7 +123,7 @@ def sharpe(
     annualize: bool = True,
 ) -> float | pl.DataFrame:
     """
-    Calculates the Sharpe ratio of access returns.
+    Calculates the Sharpe ratio of excess returns.
 
     The Sharpe ratio measures risk-adjusted return by dividing excess return by volatility.
 
@@ -141,9 +136,10 @@ def sharpe(
     Returns:
         float | pl.DataFrame: Sharpe ratio value(s)
     """
-    returns_ldf = _prepare_returns(_to_lazy(returns), rf)
+    returns_ldf = to_lazy(returns)
 
-    sharpe = RETURNS_COLUMNS_SELECTOR.mean() / RETURNS_COLUMNS_SELECTOR.std(ddof=1)
+    excess_returns = _to_excess_returns(RETURNS_COLUMNS_SELECTOR, rf)
+    sharpe = excess_returns.mean() / excess_returns.std(ddof=1)
 
     if annualize:
         sharpe = sharpe * (periods**0.5)
@@ -182,7 +178,7 @@ def volatility(
     Returns:
         float | pl.DataFrame: Volatility value(s)
     """
-    returns_ldf = _prepare_returns(_to_lazy(returns))
+    returns_ldf = to_lazy(returns)
 
     std_expr = RETURNS_COLUMNS_SELECTOR.std(ddof=1)
 
@@ -219,7 +215,7 @@ def to_drawdowns(
     Returns:
         pl.Series | pl.DataFrame: Drawdowns with same structure as input
     """
-    returns_ldf = _prepare_returns(_to_lazy(returns))
+    returns_ldf = to_lazy(returns)
 
     res = returns_ldf.with_columns(_drawdowns(RETURNS_COLUMNS_SELECTOR)).collect()
 
@@ -229,6 +225,15 @@ def to_drawdowns(
         return res
 
 
+# ===============================
+# Private expressions
+# ===============================
+
+
+def _comp(expr: pl.Expr) -> pl.Expr:
+    return (expr + 1).product() - 1
+
+
 def _drawdowns(expr: pl.Expr) -> pl.Expr:
     wealth_index = (expr + 1).cum_prod()
     running_max_wealth_index = wealth_index.cum_max()
@@ -236,36 +241,8 @@ def _drawdowns(expr: pl.Expr) -> pl.Expr:
     return drawdowns.clip(lower_bound=None, upper_bound=0)
 
 
-def _prepare_returns(returns: pl.LazyFrame, rf: float | pl.Series | None = None) -> pl.LazyFrame:
-    expr = (
-        pl.when((RETURNS_COLUMNS_SELECTOR).drop_nulls().is_between(0, 1))
-        .then(RETURNS_COLUMNS_SELECTOR)
-        .otherwise((RETURNS_COLUMNS_SELECTOR).pct_change())
-        .fill_null(0)
-    )
+def _to_excess_returns(expr: pl.Expr, rf: float | pl.Series | None) -> pl.Expr:
+    if not rf:
+        return expr
 
-    if rf:
-        return returns.with_columns(expr.sub(rf))
-
-    return returns.with_columns(expr)
-
-
-def _get_dt_column(returns: pl.LazyFrame) -> pl.Expr:
-    column_names = cs.expand_selector(returns, DT_COLUMNS_SELECTOR)
-
-    if len(column_names) != 1:
-        raise ValueError(f"Must have exactly one temporal column. Found {column_names}")
-
-    return pl.col(column_names[0])
-
-
-def _to_lazy(returns: pl.Series | pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
-    match returns:
-        case pl.Series():
-            ldf = pl.LazyFrame(returns)
-        case pl.DataFrame():
-            ldf = returns.lazy()
-        case pl.LazyFrame():
-            ldf = returns
-
-    return ldf.fill_nan(None)
+    return expr.sub(rf)

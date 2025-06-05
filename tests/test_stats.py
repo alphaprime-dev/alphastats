@@ -1,5 +1,4 @@
 import math
-from collections.abc import Generator
 from datetime import date
 
 import polars as pl
@@ -7,12 +6,6 @@ import pytest
 from inline_snapshot import snapshot
 
 from alphastats import stats
-
-
-@pytest.fixture(autouse=True)
-def set_float_precision() -> Generator[None, None, None]:
-    with pl.Config(set_float_precision=6):
-        yield
 
 
 @pytest.fixture
@@ -126,28 +119,28 @@ class TestCagr:
         """Test basic CAGR calculation."""
         result = stats.cagr(simple_returns_df, periods=252)
         assert result.to_dict(as_series=False) == snapshot(
-            {"asset_a": [-0.9999999996618938], "asset_b": [-1.0]}
+            {"asset_a": [5.238246821747209], "asset_b": [5.238246821747209]}
         )
 
     def test_cagr_with_risk_free_rate(self, simple_returns_df: pl.DataFrame) -> None:
         """Test CAGR calculation with risk-free rate."""
-        result = stats.cagr(simple_returns_df, rf=0.02, periods=252)
+        result = stats.cagr(simple_returns_df, rf=0.002, periods=252)
         assert result.to_dict(as_series=False) == snapshot(
-            {"asset_a": [-0.999999999411115], "asset_b": [-1.0]}
+            {"asset_a": [2.3321544328343586], "asset_b": [2.3321544328344044]}
         )
 
     def test_cagr_non_compound(self, simple_returns_df: pl.DataFrame) -> None:
         """Test CAGR calculation without compounding."""
         result = stats.cagr(simple_returns_df, compound=False, periods=252)
         assert result.to_dict(as_series=False) == snapshot(
-            {"asset_a": [-2.782176533738531e32], "asset_b": [-2.43521261277413e20]}
+            {"asset_a": [5.437913785074596], "asset_b": [5.437913785074596]}
         )
 
     def test_cagr_different_periods(self, simple_returns_df: pl.DataFrame) -> None:
         """Test CAGR calculation with different period frequencies."""
         result = stats.cagr(simple_returns_df, periods=12)  # Monthly
         assert result.to_dict(as_series=False) == snapshot(
-            {"asset_a": [-0.6460005937649241], "asset_b": [-0.9557500742206155]}
+            {"asset_a": [0.09108885990481008], "asset_b": [0.09108885990481008]}
         )
 
     def test_cagr_extreme_values(self) -> None:
@@ -159,7 +152,7 @@ class TestCagr:
             }
         )
         result = stats.cagr(extreme_df, periods=252)
-        assert result.to_dict(as_series=False) == snapshot({"asset": [-2.261248737261588e34]})
+        assert result.to_dict(as_series=False) == snapshot({"asset": [-1.0]})
 
 
 class TestMaxDrawdown:
@@ -191,19 +184,19 @@ class TestMaxDrawdown:
     def test_max_drawdown_series_calculation(self, simple_returns_series: pl.Series) -> None:
         """Test maximum drawdown calculation for series."""
         result = stats.max_drawdown(simple_returns_series)
-        assert result == snapshot(-3.06)
+        assert result == snapshot(-0.020000000000000018)
 
     def test_max_drawdown_dataframe_calculation(self, simple_returns_df: pl.DataFrame) -> None:
         """Test maximum drawdown calculation for dataframe."""
         result = stats.max_drawdown(simple_returns_df)
         assert result.to_dict(as_series=False) == snapshot(
-            {"asset_a": [-3.06], "asset_b": [-1.5201500000000001]}
+            {"asset_a": [-0.020000000000000018], "asset_b": [-0.020000000000000018]}
         )
 
     def test_max_drawdown_extreme_values(self, extreme_returns: pl.Series) -> None:
         """Test maximum drawdown with extreme values."""
         result = stats.max_drawdown(extreme_returns)
-        assert result == snapshot(-2.6000000000000005)
+        assert result == snapshot(-0.956)
 
     def test_max_drawdown_single_value(self) -> None:
         """Test max_drawdown with single value."""
@@ -247,34 +240,34 @@ class TestSharpe:
     def test_sharpe_series_calculation(self, simple_returns_series: pl.Series) -> None:
         """Test Sharpe ratio calculation for series."""
         result = stats.sharpe(simple_returns_series)
-        assert result == snapshot(-10.164280273197951)
+        assert result == snapshot(4.593220484431882)
 
     def test_sharpe_dataframe_calculation(self, simple_returns_df: pl.DataFrame) -> None:
         """Test Sharpe ratio calculation for dataframe."""
         result = stats.sharpe(simple_returns_df)
         assert result.to_dict(as_series=False) == snapshot(
-            {"asset_a": [-10.164280273197951], "asset_b": [-11.20600940533624]}
+            {"asset_a": [4.593220484431882], "asset_b": [4.593220484431882]}
         )
 
     def test_sharpe_with_risk_free_rate(self, simple_returns_series: pl.Series) -> None:
         """Test Sharpe ratio with risk-free rate."""
-        result = stats.sharpe(simple_returns_series, rf=0.02)
-        assert result == snapshot(-10.402133945737683)
+        result = stats.sharpe(simple_returns_series, rf=0.002)
+        assert result == snapshot(3.062146989621255)
 
     def test_sharpe_non_annualized(self, simple_returns_series: pl.Series) -> None:
         """Test Sharpe ratio without annualization."""
         result = stats.sharpe(simple_returns_series, annualize=False)
-        assert result == snapshot(-0.640289472829558)
+        assert result == snapshot(0.28934569330224724)
 
     def test_sharpe_different_periods(self, simple_returns_series: pl.Series) -> None:
         """Test Sharpe ratio with different period frequencies."""
         result = stats.sharpe(simple_returns_series, periods=12)  # Monthly
-        assert result == snapshot(-2.218027796984573)
+        assert result == snapshot(1.002322883501468)
 
     def test_sharpe_extreme_values(self, extreme_returns: pl.Series) -> None:
         """Test Sharpe ratio with extreme values."""
         result = stats.sharpe(extreme_returns)
-        assert result == snapshot(-12.740483884391793)
+        assert result == snapshot(1.0629032821934614)
 
     def test_sharpe_all_zeros(self) -> None:
         """Test Sharpe ratio with all zero returns."""
@@ -312,29 +305,29 @@ class TestVolatility:
     def test_volatility_series_calculation(self, simple_returns_series: pl.Series) -> None:
         """Test volatility calculation for series."""
         result = stats.volatility(simple_returns_series)
-        assert result == snapshot(21.189498342339302)
+        assert result == snapshot(0.3291808013842849)
 
     def test_volatility_dataframe_calculation(self, simple_returns_df: pl.DataFrame) -> None:
         """Test volatility calculation for dataframe."""
         result = stats.volatility(simple_returns_df)
         assert result.to_dict(as_series=False) == snapshot(
-            {"asset_a": [21.189498342339302], "asset_b": [13.972502996957992]}
+            {"asset_a": [0.3291808013842849], "asset_b": [0.3291808013842849]}
         )
 
     def test_volatility_non_annualized(self, simple_returns_series: pl.Series) -> None:
         """Test volatility without annualization."""
         result = stats.volatility(simple_returns_series, annualize=False)
-        assert result == snapshot(1.3348129290486948)
+        assert result == snapshot(0.020736441353327723)
 
     def test_volatility_different_periods(self, simple_returns_series: pl.Series) -> None:
         """Test volatility with different period frequencies."""
         result = stats.volatility(simple_returns_series, periods=12)  # Monthly
-        assert result == snapshot(4.62392762342434)
+        assert result == snapshot(0.07183313998427189)
 
     def test_volatility_extreme_values(self, extreme_returns: pl.Series) -> None:
         """Test volatility with extreme values."""
         result = stats.volatility(extreme_returns)
-        assert result == snapshot(23.93315691671285)
+        assert result == snapshot(14.225188926689164)
 
     def test_volatility_all_zeros(self) -> None:
         """Test volatility with all zero returns."""
@@ -373,7 +366,7 @@ class TestToDrawdowns:
         """Test drawdowns calculation for series."""
         result = stats.to_drawdowns(simple_returns_series)
         assert result.to_list() == snapshot(
-            [0.0, -3.0, -3.06, -0.313333333333333, -0.29959999999999964]
+            [0.0, -0.020000000000000018, 0.0, -0.01000000000000012, 0.0]
         )
 
     def test_to_drawdowns_dataframe_calculation(self, simple_returns_df: pl.DataFrame) -> None:
@@ -382,17 +375,21 @@ class TestToDrawdowns:
         expected_dict = result.select(pl.exclude("date")).to_dict(as_series=False)
         assert expected_dict == snapshot(
             {
-                "asset_a": [0.0, -3.0, -3.06, -0.313333333333333, -0.29959999999999964],
-                "asset_b": [0.0, -1.5, -1.505, -1.5201500000000001, -0.6532333333333333],
+                "asset_a": [0.0, -0.020000000000000018, 0.0, -0.01000000000000012, 0.0],
+                "asset_b": [
+                    0.0,
+                    -0.010000000000000009,
+                    -0.00010000000000010001,
+                    0.0,
+                    -0.020000000000000018,
+                ],
             }
         )
 
     def test_to_drawdowns_extreme_values(self, extreme_returns: pl.Series) -> None:
         """Test drawdowns with extreme values."""
         result = stats.to_drawdowns(extreme_returns)
-        assert result.to_list() == snapshot(
-            [0.0, -2.6000000000000005, 0.0, -1.7500000000000002, -1.9750000000000003]
-        )
+        assert result.to_list() == snapshot([0.0, -0.8, -0.56, -0.956, -0.9428])
 
     def test_to_drawdowns_all_zeros(self) -> None:
         """Test drawdowns with all zero returns."""
