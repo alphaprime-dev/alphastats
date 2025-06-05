@@ -1,3 +1,4 @@
+import datetime
 import math
 from datetime import date
 
@@ -372,9 +373,16 @@ class TestToDrawdowns:
     def test_to_drawdowns_dataframe_calculation(self, simple_returns_df: pl.DataFrame) -> None:
         """Test drawdowns calculation for dataframe."""
         result = stats.to_drawdowns(simple_returns_df)
-        expected_dict = result.select(pl.exclude("date")).to_dict(as_series=False)
+        expected_dict = result.to_dict(as_series=False)
         assert expected_dict == snapshot(
             {
+                "date": [
+                    datetime.date(2023, 1, 1),
+                    datetime.date(2023, 1, 2),
+                    datetime.date(2023, 1, 3),
+                    datetime.date(2023, 1, 4),
+                    datetime.date(2023, 1, 5),
+                ],
                 "asset_a": [0.0, -0.020000000000000018, 0.0, -0.01000000000000012, 0.0],
                 "asset_b": [
                     0.0,
