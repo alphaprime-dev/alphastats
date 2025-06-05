@@ -2,7 +2,7 @@ from typing import overload
 
 import polars as pl
 
-from alphastats._utils import RETURNS_COLUMNS_SELECTOR, get_dt_column, to_lazy
+from alphastats._utils import RETURNS_COLUMNS_SELECTOR, get_dt_column, to_excess_returns, to_lazy
 
 
 @overload
@@ -33,6 +33,10 @@ def comp(returns: pl.Series | pl.DataFrame | pl.LazyFrame) -> float | pl.DataFra
         return res
 
 
+def _comp(expr: pl.Expr) -> pl.Expr:
+    return (expr + 1).product() - 1
+
+
 def cagr(
     returns: pl.DataFrame | pl.LazyFrame,
     rf: float | None = None,
@@ -57,7 +61,7 @@ def cagr(
     """
     returns_ldf = to_lazy(returns)
 
-    excess_returns = _to_excess_returns(RETURNS_COLUMNS_SELECTOR, rf)
+    excess_returns = to_excess_returns(RETURNS_COLUMNS_SELECTOR, rf)
     dt_col = get_dt_column(returns_ldf)
     n_years = (dt_col.last() - dt_col.first()).dt.total_days() / periods
 
@@ -138,7 +142,7 @@ def sharpe(
     """
     returns_ldf = to_lazy(returns)
 
-    excess_returns = _to_excess_returns(RETURNS_COLUMNS_SELECTOR, rf)
+    excess_returns = to_excess_returns(RETURNS_COLUMNS_SELECTOR, rf)
     sharpe = excess_returns.mean() / excess_returns.std(ddof=1)
 
     if annualize:
@@ -225,24 +229,8 @@ def to_drawdowns(
         return res
 
 
-# ===============================
-# Private expressions
-# ===============================
-
-
-def _comp(expr: pl.Expr) -> pl.Expr:
-    return (expr + 1).product() - 1
-
-
 def _drawdowns(expr: pl.Expr) -> pl.Expr:
     wealth_index = (expr + 1).cum_prod()
     running_max_wealth_index = wealth_index.cum_max()
     drawdowns = (wealth_index / running_max_wealth_index) - 1
     return drawdowns.clip(lower_bound=None, upper_bound=0)
-
-
-def _to_excess_returns(expr: pl.Expr, rf: float | pl.Series | None) -> pl.Expr:
-    if not rf:
-        return expr
-
-    return expr.sub(rf)

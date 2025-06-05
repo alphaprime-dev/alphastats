@@ -24,3 +24,10 @@ def to_lazy(returns: pl.Series | pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
             ldf = returns
 
     return ldf.fill_nan(None)
+
+
+def to_excess_returns(expr: pl.Expr, rf: float | pl.Series | None) -> pl.Expr:
+    if not rf:
+        return expr
+
+    return expr.sub(rf)
