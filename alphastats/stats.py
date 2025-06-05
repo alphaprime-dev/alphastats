@@ -40,7 +40,7 @@ def cagr(
     periods: int = 252,
 ) -> pl.DataFrame:
     """
-    Calculates the communicative annualized growth return
+    Calculates the Compound Annual Growth Rate
     (CAGR%) of access returns
 
     If rf is non-zero, you must specify periods.
