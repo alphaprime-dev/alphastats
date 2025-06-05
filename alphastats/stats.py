@@ -18,10 +18,10 @@ def comp(returns: pl.Series | pl.DataFrame | pl.LazyFrame) -> float | pl.DataFra
     Compute total compounded returns.
 
     Args:
-        returns(pl.Series | pl.DataFrame | pl.LazyFrame): Returns series or dataframe
+        returns: Returns series or dataframe
 
     Returns:
-        float | pl.DataFrame: Compounded returns
+        Compounded return(s)
     """
     returns_ldf = to_lazy(returns)
 
@@ -47,13 +47,13 @@ def cagr(
     In this case, rf is assumed to be expressed in yearly (annualized) terms
 
     Args:
-        returns(pl.DataFrame | pl.LazyFrame): Returns dataframe or lazyframe
-        rf(float): Risk-free rate
-        compound(bool): Whether to compound the returns
-        periods(int): Number of periods in a year
+        returns: Returns dataframe or lazyframe
+        rf: Risk-free rate
+        compound: Whether to compound the returns
+        periods: Number of periods in a year
 
     Returns:
-        pl.DataFrame: CAGR%
+        CAGR%
     """
     returns_ldf = to_lazy(returns)
 
@@ -84,10 +84,10 @@ def max_drawdown(returns: pl.Series | pl.DataFrame | pl.LazyFrame) -> float | pl
     Maximum drawdown is the largest peak-to-trough decline in the cumulative returns.
 
     Args:
-        returns(pl.Series | pl.DataFrame | pl.LazyFrame): Returns series or dataframe
+        returns: Returns series or dataframe
 
     Returns:
-        float | pl.DataFrame: Maximum drawdown value(s)
+        Maximum drawdown value(s)
     """
     returns_ldf = to_lazy(returns)
 
@@ -128,13 +128,13 @@ def sharpe(
     The Sharpe ratio measures risk-adjusted return by dividing excess return by volatility.
 
     Args:
-        returns(pl.Series | pl.DataFrame | pl.LazyFrame): Returns series or dataframe
-        rf(float): Risk-free rate expressed as yearly (annualized) return
-        periods(int): Frequency of returns (252 for daily, 12 for monthly)
-        annualize(bool): Whether to annualize the Sharpe ratio
+        returns: Returns series or dataframe
+        rf: Risk-free rate expressed as yearly (annualized) return
+        periods: Frequency of returns (252 for daily, 12 for monthly)
+        annualize: Whether to annualize the Sharpe ratio
 
     Returns:
-        float | pl.DataFrame: Sharpe ratio value(s)
+        Sharpe ratio value(s)
     """
     returns_ldf = to_lazy(returns)
 
@@ -171,12 +171,12 @@ def volatility(
     Calculates the volatility (standard deviation) of returns.
 
     Args:
-        returns(pl.Series | pl.DataFrame | pl.LazyFrame): Returns series or dataframe
-        periods(int): Frequency of returns (252 for daily, 12 for monthly)
-        annualize(bool): Whether to annualize the volatility
+        returns: Returns series or dataframe
+        periods: Frequency of returns (252 for daily, 12 for monthly)
+        annualize: Whether to annualize the volatility
 
     Returns:
-        float | pl.DataFrame: Volatility value(s)
+        Volatility value(s)
     """
     returns_ldf = to_lazy(returns)
 
@@ -210,10 +210,10 @@ def to_drawdowns(
     Drawdowns shows the percentage decline from the previous peak at each point in time.
 
     Args:
-        returns(pl.Series | pl.DataFrame | pl.LazyFrame): Returns series or dataframe
+        returns: Returns series or dataframe
 
     Returns:
-        pl.Series | pl.DataFrame: Drawdowns with same structure as input
+        Drawdowns with same structure as input
     """
     returns_ldf = to_lazy(returns)
 
