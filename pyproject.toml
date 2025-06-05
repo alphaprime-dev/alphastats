@@ -8,11 +8,12 @@ dependencies = ["polars>=1.0.0,<2"]
 
 [dependency-groups]
 dev = [
+    "inline-snapshot>=0.23.2",
     "mypy==1.15.0",
- "pre-commit>=4.2.0",
- "pytest>=8.3.5",
- "pytest-asyncio>=1.0.0",
- "ruff==0.11.2",
+    "pre-commit>=4.2.0",
+    "pytest>=8.3.5",
+    "pytest-asyncio>=1.0.0",
+    "ruff==0.11.2",
 ]
 
 [build-system]
@@ -66,3 +67,6 @@ preview = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.inline-snapshot]
+format-command = "ruff format --stdin-filename {filename}"
