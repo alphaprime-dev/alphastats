@@ -10,7 +10,7 @@ from alphastats.exceptions import (
 RETURNS_COLUMNS_SELECTOR = cs.numeric()
 TEMPORAL_COLUMNS_SELECTOR = cs.temporal()
 
-BENCHMARK_RETURNS = "_benchmark_returns"
+BENCHMARK_RETURNS_COLNAME = "_benchmark_returns"
 
 
 def get_temporal_column(returns: pl.LazyFrame) -> pl.Expr | None:
@@ -52,6 +52,6 @@ def prepare_benchmark(benchmark: pl.LazyFrame) -> pl.LazyFrame:
             raise AmbiguousBenchmarkReturnsError(column_names)
 
     if (temporal_col := get_temporal_column(benchmark)) is not None:
-        return benchmark.select(temporal_col, return_col.alias(BENCHMARK_RETURNS))
+        return benchmark.select(temporal_col, return_col.alias(BENCHMARK_RETURNS_COLNAME))
     else:
-        return benchmark.select(return_col.alias(BENCHMARK_RETURNS))
+        return benchmark.select(return_col.alias(BENCHMARK_RETURNS_COLNAME))

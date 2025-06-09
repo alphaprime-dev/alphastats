@@ -4,7 +4,7 @@ import polars as pl
 import polars.selectors as cs
 
 from alphastats._utils import (
-    BENCHMARK_RETURNS,
+    BENCHMARK_RETURNS_COLNAME,
     RETURNS_COLUMNS_SELECTOR,
     get_temporal_column,
     prepare_benchmark,
@@ -282,12 +282,14 @@ def greeks(
     else:
         joined = pl.concat([returns_ldf, benchmark_ldf], how="horizontal")
 
-    strategy_returns_cols = RETURNS_COLUMNS_SELECTOR - cs.by_name(BENCHMARK_RETURNS)
+    strategy_returns_cols = RETURNS_COLUMNS_SELECTOR - cs.by_name(BENCHMARK_RETURNS_COLNAME)
 
     exprs: list[pl.Expr] = []
     for col_name in cs.expand_selector(joined, strategy_returns_cols):
-        beta = pl.cov(col_name, BENCHMARK_RETURNS, ddof=1) / pl.var(BENCHMARK_RETURNS, ddof=1)
-        alpha = pl.mean(col_name) - beta * pl.mean(BENCHMARK_RETURNS)
+        beta = pl.cov(col_name, BENCHMARK_RETURNS_COLNAME, ddof=1) / pl.var(
+            BENCHMARK_RETURNS_COLNAME, ddof=1
+        )
+        alpha = pl.mean(col_name) - beta * pl.mean(BENCHMARK_RETURNS_COLNAME)
 
         exprs.append(
             pl.struct(
