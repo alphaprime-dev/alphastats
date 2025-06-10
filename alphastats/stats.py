@@ -1,8 +1,17 @@
 from typing import overload
 
 import polars as pl
+import polars.selectors as cs
 
-from alphastats._utils import RETURNS_COLUMNS_SELECTOR, get_dt_column, to_excess_returns, to_lazy
+from alphastats._utils import (
+    BENCHMARK_RETURNS_COLNAME,
+    RETURNS_COLUMNS_SELECTOR,
+    get_temporal_column,
+    prepare_benchmark,
+    to_excess_returns,
+    to_lazy,
+)
+from alphastats.exceptions import NoTemporalColumnError
 
 
 @overload
@@ -62,8 +71,11 @@ def cagr(
     returns_ldf = to_lazy(returns)
 
     excess_returns = to_excess_returns(RETURNS_COLUMNS_SELECTOR, rf)
-    dt_col = get_dt_column(returns_ldf)
-    n_years = (dt_col.last() - dt_col.first()).dt.total_days() / periods
+    temporal_col = get_temporal_column(returns_ldf)
+    if temporal_col is None:
+        raise NoTemporalColumnError
+
+    n_years = (temporal_col.last() - temporal_col.first()).dt.total_days() / periods
 
     if compound:
         expr = _comp(excess_returns).add(1).pow(1 / n_years).sub(1)
@@ -234,3 +246,58 @@ def _drawdowns(expr: pl.Expr) -> pl.Expr:
     running_max_wealth_index = wealth_index.cum_max()
     drawdowns = (wealth_index / running_max_wealth_index) - 1
     return drawdowns.clip(lower_bound=None, upper_bound=0)
+
+
+def greeks(
+    returns: pl.Series | pl.DataFrame | pl.LazyFrame,
+    benchmark: pl.Series | pl.DataFrame | pl.LazyFrame,
+    periods: int = 252,
+) -> pl.DataFrame:
+    """
+    Calculate CAPM alpha & beta for every numeric column in `returns`
+    and return them as struct columns (alpha, beta).
+
+    Returns:
+        1-row DataFrame with struct columns (α·β) for each numeric column
+
+    Example:
+        ┌─────────────┬──────────────┬──────┬──────────────┐
+        │ col_1       │ col_2        │ ...  │ col_n        │
+        │ ---         │ ---          │ ---  │ ---          │
+        │ struct[α·β] │ struct[α·β]  │ ...  │ struct[α·β]  │
+        └─────────────┴──────────────┴──────┴──────────────┘
+    """
+    returns_ldf = to_lazy(returns)
+    benchmark_ldf = prepare_benchmark(to_lazy(benchmark))
+
+    returns_temporal_col = get_temporal_column(returns_ldf)
+    benchmark_temporal_col = get_temporal_column(benchmark_ldf)
+
+    if returns_temporal_col is not None and benchmark_temporal_col is not None:
+        joined = returns_ldf.join_asof(
+            benchmark_ldf,
+            left_on=returns_temporal_col,
+            right_on=benchmark_temporal_col,
+        )
+    else:
+        joined = pl.concat([returns_ldf, benchmark_ldf], how="horizontal")
+
+    strategy_returns_cols = RETURNS_COLUMNS_SELECTOR - cs.by_name(BENCHMARK_RETURNS_COLNAME)
+
+    exprs: list[pl.Expr] = []
+    for col_name in cs.expand_selector(joined, strategy_returns_cols):
+        beta = pl.cov(col_name, BENCHMARK_RETURNS_COLNAME, ddof=1) / pl.var(
+            BENCHMARK_RETURNS_COLNAME, ddof=1
+        )
+        alpha = pl.mean(col_name) - beta * pl.mean(BENCHMARK_RETURNS_COLNAME)
+
+        exprs.append(
+            pl.struct(
+                [
+                    (alpha * periods).alias("alpha"),
+                    beta.alias("beta"),
+                ]
+            ).alias(col_name)
+        )
+
+    return joined.select(exprs).collect()
