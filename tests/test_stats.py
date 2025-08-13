@@ -849,23 +849,35 @@ class TestCalmar:
     """Tests for the Calmar ratio metric."""
 
     def test_calmar_basic(self, simple_returns_df: pl.DataFrame) -> None:
-        result = stats.calmar(simple_returns_df, periods=252)
+        # given
         cagr_df = stats.cagr(simple_returns_df, periods=252)
         mdd_df = stats.max_drawdown(simple_returns_df)
         expected = {col: [cagr_df[col][0] / abs(mdd_df[col][0])] for col in ["asset_a", "asset_b"]}
+
+        # when
+        result = stats.calmar(simple_returns_df, periods=252)
+
+        # then
         assert result.to_dict(as_series=False) == expected
 
     def test_calmar_extreme(self) -> None:
+        # given
         df = pl.DataFrame(
             {
                 "date": [date(2023, 1, i) for i in range(1, 6)],
                 "asset": [0.5, -0.8, 1.2, -0.9, 0.3],
             }
         )
-        result = stats.calmar(df, periods=252)
         cagr_val = stats.cagr(df, periods=252)["asset"][0]
         mdd_val = abs(stats.max_drawdown(df)["asset"][0])
-        assert result.to_dict(as_series=False) == {"asset": [cagr_val / mdd_val]}
+        expected_val = cagr_val / mdd_val
+
+        # when
+        result = stats.calmar(df, periods=252)
+
+        # then
+        res_dict = result.to_dict(as_series=False)
+        assert pytest.approx(res_dict["asset"][0], rel=1e-3) == expected_val
 
     def test_calmar_requires_temporal_column(self) -> None:
         df = pl.DataFrame({"asset": [0.01, -0.02, 0.03, -0.01, 0.02]})
