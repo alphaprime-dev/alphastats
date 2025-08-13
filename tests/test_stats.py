@@ -1,6 +1,7 @@
 import datetime
 import math
 from datetime import date
+from typing import cast
 
 import polars as pl
 import pytest
@@ -11,6 +12,7 @@ from alphastats.exceptions import (
     AmbiguousBenchmarkReturnsError,
     MultipleTemporalColumnsError,
     NoReturnColumnError,
+    NoTemporalColumnError,
 )
 
 
@@ -307,6 +309,114 @@ class TestSharpe:
         """Test Sharpe ratio with all zero returns."""
         zero_series = pl.Series("returns", [0.0, 0.0, 0.0, 0.0])
         result = stats.sharpe(zero_series)
+        assert math.isnan(result)
+
+
+class TestProbabilisticSharpeRatio:
+    """Tests for the Probabilistic Sharpe Ratio (PSR)."""
+
+    @pytest.mark.parametrize(
+        "returns_fixture,expected_type",
+        [
+            ("simple_returns_series", float),
+            ("simple_returns_df", pl.DataFrame),
+        ],
+    )
+    def test_psr_return_types(
+        self, returns_fixture: str, expected_type: type, request: pytest.FixtureRequest
+    ) -> None:
+        data = request.getfixturevalue(returns_fixture)
+        if returns_fixture == "simple_returns_df":
+            assert isinstance(stats.probabilistic_sharpe_ratio(data), expected_type)
+            assert isinstance(stats.psr(data), expected_type)
+            assert isinstance(stats.probabilistic_sharpe_ratio(data.lazy()), expected_type)
+        else:
+            assert isinstance(stats.probabilistic_sharpe_ratio(data), expected_type)
+            assert isinstance(stats.psr(data), expected_type)
+
+    def test_psr_basic_series(self, simple_returns_series: pl.Series) -> None:
+        # Deterministic value based on fixed inputs
+        val = stats.probabilistic_sharpe_ratio(simple_returns_series)
+        assert val == snapshot(0.7132960099383969)
+
+    def test_psr_with_benchmark(self, simple_returns_series: pl.Series) -> None:
+        # With a higher benchmark SR, probability should decrease
+        base = stats.psr(simple_returns_series, sr_benchmark=0.0)
+        lower = stats.psr(simple_returns_series, sr_benchmark=1.0)
+        assert lower <= base
+
+    def test_psr_dataframe_values(self, simple_returns_df: pl.DataFrame) -> None:
+        res = stats.psr(simple_returns_df)
+        assert isinstance(res, pl.DataFrame)
+        assert set(res.columns) == {"asset_a", "asset_b"}
+        for col in res.columns:
+            assert 0.0 <= res[col][0] <= 1.0
+
+
+class TestSortino:
+    """Test cases for the Sortino ratio function."""
+
+    @pytest.mark.parametrize(
+        "returns_fixture,expected_type",
+        [
+            ("simple_returns_series", float),
+            ("simple_returns_df", pl.DataFrame),
+        ],
+    )
+    def test_sortino_return_types(
+        self, returns_fixture: str, expected_type: type, request: pytest.FixtureRequest
+    ) -> None:
+        """Test that sortino returns correct types for different inputs."""
+        returns_data = request.getfixturevalue(returns_fixture)
+        if returns_fixture == "simple_returns_df":
+            # Test both DataFrame and LazyFrame
+            result_df = stats.sortino(returns_data)
+            assert isinstance(result_df, expected_type)
+
+            result_lazy = stats.sortino(returns_data.lazy())
+            assert isinstance(result_lazy, expected_type)
+        else:
+            result = stats.sortino(returns_data)
+            assert isinstance(result, expected_type)
+
+    def test_sortino_series_calculation(self, simple_returns_series: pl.Series) -> None:
+        """Test Sortino ratio calculation for series (annualized)."""
+        result = stats.sortino(simple_returns_series)
+        assert result == snapshot(9.524704719832526)
+
+    def test_sortino_dataframe_calculation(self, simple_returns_df: pl.DataFrame) -> None:
+        """Test Sortino ratio calculation for dataframe (annualized)."""
+        result = stats.sortino(simple_returns_df)
+        assert result.to_dict(as_series=False) == snapshot(
+            {"asset_a": [9.524704719832526], "asset_b": [9.524704719832526]}
+        )
+
+    def test_sortino_with_risk_free_rate_non_annualized(
+        self, simple_returns_series: pl.Series
+    ) -> None:
+        """Test Sortino ratio with risk-free rate without annualization."""
+        result = stats.sortino(simple_returns_series, rf=0.002, annualize=False)
+        assert result == snapshot(0.35691530512412484)
+
+    def test_sortino_non_annualized(self, simple_returns_series: pl.Series) -> None:
+        """Test Sortino ratio without annualization."""
+        result = stats.sortino(simple_returns_series, annualize=False)
+        assert result == snapshot(0.6)
+
+    def test_sortino_different_periods(self, simple_returns_series: pl.Series) -> None:
+        """Test Sortino ratio with different period frequency (monthly)."""
+        result = stats.sortino(simple_returns_series, periods=12)
+        assert result == snapshot(2.0784609690826525)
+
+    def test_sortino_extreme_values(self, extreme_returns: pl.Series) -> None:
+        """Test Sortino ratio with extreme values (annualized)."""
+        result = stats.sortino(extreme_returns)
+        assert result == snapshot(1.7686932639858621)
+
+    def test_sortino_all_zeros(self) -> None:
+        """Test Sortino ratio with all zero returns (NaN due to zero downside risk)."""
+        zero_series = pl.Series("returns", [0.0, 0.0, 0.0, 0.0])
+        result = stats.sortino(zero_series)
         assert math.isnan(result)
 
 
@@ -733,3 +843,277 @@ class TestGreeks:
 
         with pytest.raises(MultipleTemporalColumnsError):
             stats.greeks(returns, invalid_benchmark)
+
+
+class TestCalmar:
+    """Tests for the Calmar ratio metric."""
+
+    def test_calmar_basic(self, simple_returns_df: pl.DataFrame) -> None:
+        # given
+        cagr_df = stats.cagr(simple_returns_df, periods=252)
+        mdd_df = stats.max_drawdown(simple_returns_df)
+        expected = {col: [cagr_df[col][0] / abs(mdd_df[col][0])] for col in ["asset_a", "asset_b"]}
+
+        # when
+        result = stats.calmar(simple_returns_df, periods=252)
+
+        # then
+        assert result.to_dict(as_series=False) == expected
+
+    def test_calmar_extreme(self) -> None:
+        # given
+        df = pl.DataFrame(
+            {
+                "date": [date(2023, 1, i) for i in range(1, 6)],
+                "asset": [0.5, -0.8, 1.2, -0.9, 0.3],
+            }
+        )
+        cagr_val = stats.cagr(df, periods=252)["asset"][0]
+        mdd_val = abs(stats.max_drawdown(df)["asset"][0])
+        expected_val = cagr_val / mdd_val
+
+        # when
+        result = stats.calmar(df, periods=252)
+
+        # then
+        res_dict = result.to_dict(as_series=False)
+        assert pytest.approx(res_dict["asset"][0], rel=1e-3) == expected_val
+
+    def test_calmar_requires_temporal_column(self) -> None:
+        df = pl.DataFrame({"asset": [0.01, -0.02, 0.03, -0.01, 0.02]})
+        with pytest.raises(MultipleTemporalColumnsError):
+            # Ensure no confusion with other errors; add a second temporal column scenario
+            invalid = pl.DataFrame(
+                {
+                    "date": [date(2023, 1, i) for i in range(1, 6)],
+                    "datetime": [datetime.datetime(2023, 1, i) for i in range(1, 6)],
+                    "asset": [0.01, -0.02, 0.03, -0.01, 0.02],
+                }
+            )
+            stats.calmar(invalid)
+
+        with pytest.raises(NoTemporalColumnError):
+            # Without any temporal column, should raise NoTemporalColumnError
+            stats.calmar(df)
+
+
+class TestCPCIndex:
+    """Tests for the CPC Index metric."""
+
+    @pytest.mark.parametrize(
+        "returns_fixture,expected_type",
+        [
+            ("simple_returns_series", float),
+            ("simple_returns_df", pl.DataFrame),
+        ],
+    )
+    def test_cpc_index_return_types(
+        self, returns_fixture: str, expected_type: type, request: pytest.FixtureRequest
+    ) -> None:
+        data = request.getfixturevalue(returns_fixture)
+        if returns_fixture == "simple_returns_df":
+            assert isinstance(stats.cpc_index(data), expected_type)
+            assert isinstance(stats.cpc_index(data.lazy()), expected_type)
+        else:
+            assert isinstance(stats.cpc_index(data), expected_type)
+
+    def test_cpc_index_simple_series(self, simple_returns_series: pl.Series) -> None:
+        # Manual computation on fixture [0.01, -0.02, 0.03, -0.01, 0.02]
+        # gains_sum = 0.01 + 0.03 + 0.02 = 0.06
+        # losses_sum_abs = | -0.02 + -0.01 | = 0.03
+        # wins_count = 3, losses_count = 2, total = 5
+        # avg_win = 0.06 / 3 = 0.02
+        # avg_loss_abs = 0.03 / 2 = 0.015
+        # profit_factor = 0.06 / 0.03 = 2.0
+        # payoff_ratio = 0.02 / 0.015 = 1.3333333333333333
+        # win_rate = 3 / 5 = 0.6
+        # CPC = 2.0 * 1.3333333333333333 * 0.6 = 1.6
+        result = stats.cpc_index(simple_returns_series)
+        assert result == 1.6
+
+    def test_cpc_index_dataframe_values(self, simple_returns_df: pl.DataFrame) -> None:
+        # asset_b has same distribution as a; CPC should match
+        res = stats.cpc_index(simple_returns_df)
+        assert res.to_dict(as_series=False) == snapshot({"asset_a": [1.6], "asset_b": [1.6]})
+
+    def test_cpc_index_with_nulls(self, returns_with_nulls: pl.Series) -> None:
+        # returns_with_nulls: [0.01, None, 0.03, -0.01, None]
+        # gains_sum = 0.04, losses_sum_abs = 0.01
+        # wins = 2, losses = 1, total = 3
+        # avg_win = 0.02, avg_loss_abs = 0.01
+        # PF=4.0, PR=2.0, WR=2/3 -> CPC = 16/3 = 5.333333333333333
+        val = stats.cpc_index(returns_with_nulls)
+        assert val == 5.333333333333333
+
+    def test_cpc_index_edge_no_losses(self) -> None:
+        s = pl.Series("returns", [0.01, 0.02, 0.0])
+        # losses_sum_abs = 0 → PF and PR divisions yield inf/NaN; product should be NaN
+        res = stats.cpc_index(s)
+        assert math.isnan(res) or math.isinf(res)
+
+    def test_cpc_index_edge_no_wins(self) -> None:
+        s = pl.Series("returns", [-0.01, -0.02, 0.0])
+        res = stats.cpc_index(s)
+        assert math.isnan(res) or math.isinf(res)
+
+
+class TestExposure:
+    """Tests for Time in Market (exposure)."""
+
+    @pytest.mark.parametrize(
+        "returns_fixture,expected_type",
+        [
+            ("simple_returns_series", float),
+            ("simple_returns_df", pl.DataFrame),
+        ],
+    )
+    def test_exposure_return_types(
+        self, returns_fixture: str, expected_type: type, request: pytest.FixtureRequest
+    ) -> None:
+        data = request.getfixturevalue(returns_fixture)
+        if returns_fixture == "simple_returns_df":
+            assert isinstance(stats.exposure(data), expected_type)
+            assert isinstance(stats.exposure(data.lazy()), expected_type)
+        else:
+            assert isinstance(stats.exposure(data), expected_type)
+
+    def test_exposure_simple_series(self, simple_returns_series: pl.Series) -> None:
+        # [0.01, -0.02, 0.03, -0.01, 0.02] all non-zero -> 5/5 = 1.0
+        assert stats.exposure(simple_returns_series) == 1.0
+
+    def test_exposure_dataframe_values(self, simple_returns_df: pl.DataFrame) -> None:
+        # both columns are fully non-zero
+        res = stats.exposure(simple_returns_df)
+        assert res.to_dict(as_series=False) == {"asset_a": [1.0], "asset_b": [1.0]}
+
+    def test_exposure_with_nulls(self, returns_with_nulls: pl.Series) -> None:
+        # [0.01, None, 0.03, -0.01, None] -> non-zero count=3, total non-null=3 => 1.0
+        assert stats.exposure(returns_with_nulls) == 1.0
+
+    def test_exposure_with_zeros(self) -> None:
+        s = pl.Series("returns", [0.0, 0.01, 0.0, -0.02, 0.0, 0.03])
+        # non-zero = 3, total = 6 => 0.5
+        assert stats.exposure(s) == 0.5
+
+
+class TestOmega:
+    """Tests for Omega ratio."""
+
+    @pytest.mark.parametrize(
+        "returns_fixture,expected_type",
+        [
+            ("simple_returns_series", float),
+            ("simple_returns_df", pl.DataFrame),
+        ],
+    )
+    def test_omega_return_types(
+        self, returns_fixture: str, expected_type: type, request: pytest.FixtureRequest
+    ) -> None:
+        data = request.getfixturevalue(returns_fixture)
+        if returns_fixture == "simple_returns_df":
+            assert isinstance(stats.omega(data), expected_type)
+            assert isinstance(stats.omega(data.lazy()), expected_type)
+        else:
+            assert isinstance(stats.omega(data), expected_type)
+
+    def test_omega_simple_series_default_threshold(self, simple_returns_series: pl.Series) -> None:
+        # r = [0.01, -0.02, 0.03, -0.01, 0.02]
+        # θ=0.0: gains=sum([0.01,0.03,0.02])=0.06, losses=sum([0.02,0.01])=0.03 → 2.0
+        assert stats.omega(simple_returns_series) == 2.0
+
+    def test_omega_series_custom_threshold(self) -> None:
+        # θ=0.01: (r-θ)+ sums: [0,0,0.02,0,0.01] => 0.03
+        # (θ-r)+ sums: [0,0.03,0,0.02,0] => 0.05 → 0.6
+        s = pl.Series("returns", [0.01, -0.02, 0.03, -0.01, 0.02])
+        assert stats.omega(s, threshold=0.01) == 0.6
+
+    def test_omega_dataframe_values(self, simple_returns_df: pl.DataFrame) -> None:
+        res = stats.omega(simple_returns_df)
+        assert res.to_dict(as_series=False) == {"asset_a": [2.0], "asset_b": [2.0]}
+
+    def test_omega_with_nulls(self, returns_with_nulls: pl.Series) -> None:
+        # [0.01, None, 0.03, -0.01, None]
+        # gains=0.04, losses=0.01 → 4.0
+        assert stats.omega(returns_with_nulls) == 4.0
+
+    def test_omega_edge_no_losses(self) -> None:
+        s = pl.Series("returns", [0.02, 0.03, 0.01])
+        val = stats.omega(s)
+        assert math.isinf(val) or math.isnan(val)
+
+
+class TestInformationRatio:
+    """Tests for Information Ratio."""
+
+    @pytest.mark.parametrize(
+        "returns_fixture,expected_type",
+        [
+            ("simple_returns_series", float),
+            ("simple_returns_df", pl.DataFrame),
+        ],
+    )
+    def test_ir_return_types(
+        self,
+        returns_fixture: str,
+        expected_type: type,
+        request: pytest.FixtureRequest,
+        simple_benchmark_df: pl.DataFrame,
+        simple_benchmark_series: pl.Series,
+    ) -> None:
+        data = request.getfixturevalue(returns_fixture)
+        if returns_fixture == "simple_returns_df":
+            assert isinstance(stats.information_ratio(data, simple_benchmark_df), expected_type)
+            assert isinstance(
+                stats.information_ratio(data.lazy(), simple_benchmark_df.lazy()), expected_type
+            )
+        else:
+            assert isinstance(stats.information_ratio(data, simple_benchmark_series), expected_type)
+
+    def test_ir_simple_series(
+        self, simple_returns_series: pl.Series, simple_benchmark_series: pl.Series
+    ) -> None:
+        # given
+        # active = [0.005, -0.01, 0.015, -0.005, 0.01]
+        # mean=0.003, std(sample)=? compute explicitly
+        active = simple_returns_series - simple_benchmark_series
+        expected = cast(float, active.mean()) / cast(float, active.std(ddof=1)) * (252**0.5)
+
+        # when
+        val = stats.information_ratio(simple_returns_series, simple_benchmark_series)
+
+        # then
+        assert pytest.approx(val, rel=1e-3) == expected
+
+    def test_ir_dataframe_values(
+        self, simple_returns_df: pl.DataFrame, simple_benchmark_df: pl.DataFrame
+    ) -> None:
+        # given
+        # asset_a
+        active_a = simple_returns_df["asset_a"] - simple_benchmark_df["_benchmark_returns"]
+        expected_a = cast(float, active_a.mean()) / cast(float, active_a.std(ddof=1)) * (252**0.5)
+        # asset_b
+        active_b = simple_returns_df["asset_b"] - simple_benchmark_df["_benchmark_returns"]
+        expected_b = cast(float, active_b.mean()) / cast(float, active_b.std(ddof=1)) * (252**0.5)
+
+        # when
+        res = stats.information_ratio(simple_returns_df, simple_benchmark_df)
+
+        # then
+        res_dict = res.to_dict(as_series=False)
+        assert pytest.approx(res_dict["asset_a"][0], rel=1e-3) == expected_a
+        assert pytest.approx(res_dict["asset_b"][0], rel=1e-3) == expected_b
+
+    def test_ir_non_annualized(
+        self, simple_returns_series: pl.Series, simple_benchmark_series: pl.Series
+    ) -> None:
+        # given
+        active = simple_returns_series - simple_benchmark_series
+        expected = cast(float, active.mean()) / cast(float, active.std(ddof=1))
+
+        # when
+        val = stats.information_ratio(
+            simple_returns_series, simple_benchmark_series, annualize=False
+        )
+
+        # then
+        assert pytest.approx(val, rel=1e-3) == expected
