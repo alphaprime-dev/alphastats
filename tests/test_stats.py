@@ -11,6 +11,7 @@ from alphastats.exceptions import (
     AmbiguousBenchmarkReturnsError,
     MultipleTemporalColumnsError,
     NoReturnColumnError,
+    NoTemporalColumnError,
 )
 
 
@@ -307,6 +308,73 @@ class TestSharpe:
         """Test Sharpe ratio with all zero returns."""
         zero_series = pl.Series("returns", [0.0, 0.0, 0.0, 0.0])
         result = stats.sharpe(zero_series)
+        assert math.isnan(result)
+
+
+class TestSortino:
+    """Test cases for the Sortino ratio function."""
+
+    @pytest.mark.parametrize(
+        "returns_fixture,expected_type",
+        [
+            ("simple_returns_series", float),
+            ("simple_returns_df", pl.DataFrame),
+        ],
+    )
+    def test_sortino_return_types(
+        self, returns_fixture: str, expected_type: type, request: pytest.FixtureRequest
+    ) -> None:
+        """Test that sortino returns correct types for different inputs."""
+        returns_data = request.getfixturevalue(returns_fixture)
+        if returns_fixture == "simple_returns_df":
+            # Test both DataFrame and LazyFrame
+            result_df = stats.sortino(returns_data)
+            assert isinstance(result_df, expected_type)
+
+            result_lazy = stats.sortino(returns_data.lazy())
+            assert isinstance(result_lazy, expected_type)
+        else:
+            result = stats.sortino(returns_data)
+            assert isinstance(result, expected_type)
+
+    def test_sortino_series_calculation(self, simple_returns_series: pl.Series) -> None:
+        """Test Sortino ratio calculation for series (annualized)."""
+        result = stats.sortino(simple_returns_series)
+        assert result == snapshot(9.524704719832526)
+
+    def test_sortino_dataframe_calculation(self, simple_returns_df: pl.DataFrame) -> None:
+        """Test Sortino ratio calculation for dataframe (annualized)."""
+        result = stats.sortino(simple_returns_df)
+        assert result.to_dict(as_series=False) == snapshot(
+            {"asset_a": [9.524704719832526], "asset_b": [9.524704719832526]}
+        )
+
+    def test_sortino_with_risk_free_rate_non_annualized(
+        self, simple_returns_series: pl.Series
+    ) -> None:
+        """Test Sortino ratio with risk-free rate without annualization."""
+        result = stats.sortino(simple_returns_series, rf=0.002, annualize=False)
+        assert result == snapshot(0.35691530512412484)
+
+    def test_sortino_non_annualized(self, simple_returns_series: pl.Series) -> None:
+        """Test Sortino ratio without annualization."""
+        result = stats.sortino(simple_returns_series, annualize=False)
+        assert result == snapshot(0.6)
+
+    def test_sortino_different_periods(self, simple_returns_series: pl.Series) -> None:
+        """Test Sortino ratio with different period frequency (monthly)."""
+        result = stats.sortino(simple_returns_series, periods=12)
+        assert result == snapshot(2.0784609690826525)
+
+    def test_sortino_extreme_values(self, extreme_returns: pl.Series) -> None:
+        """Test Sortino ratio with extreme values (annualized)."""
+        result = stats.sortino(extreme_returns)
+        assert result == snapshot(1.7686932639858621)
+
+    def test_sortino_all_zeros(self) -> None:
+        """Test Sortino ratio with all zero returns (NaN due to zero downside risk)."""
+        zero_series = pl.Series("returns", [0.0, 0.0, 0.0, 0.0])
+        result = stats.sortino(zero_series)
         assert math.isnan(result)
 
 
@@ -733,3 +801,43 @@ class TestGreeks:
 
         with pytest.raises(MultipleTemporalColumnsError):
             stats.greeks(returns, invalid_benchmark)
+
+
+class TestCalmar:
+    """Tests for the Calmar ratio metric."""
+
+    def test_calmar_basic(self, simple_returns_df: pl.DataFrame) -> None:
+        result = stats.calmar(simple_returns_df, periods=252)
+        cagr_df = stats.cagr(simple_returns_df, periods=252)
+        mdd_df = stats.max_drawdown(simple_returns_df)
+        expected = {col: [cagr_df[col][0] / abs(mdd_df[col][0])] for col in ["asset_a", "asset_b"]}
+        assert result.to_dict(as_series=False) == expected
+
+    def test_calmar_extreme(self) -> None:
+        df = pl.DataFrame(
+            {
+                "date": [date(2023, 1, i) for i in range(1, 6)],
+                "asset": [0.5, -0.8, 1.2, -0.9, 0.3],
+            }
+        )
+        result = stats.calmar(df, periods=252)
+        cagr_val = stats.cagr(df, periods=252)["asset"][0]
+        mdd_val = abs(stats.max_drawdown(df)["asset"][0])
+        assert result.to_dict(as_series=False) == {"asset": [cagr_val / mdd_val]}
+
+    def test_calmar_requires_temporal_column(self) -> None:
+        df = pl.DataFrame({"asset": [0.01, -0.02, 0.03, -0.01, 0.02]})
+        with pytest.raises(MultipleTemporalColumnsError):
+            # Ensure no confusion with other errors; add a second temporal column scenario
+            invalid = pl.DataFrame(
+                {
+                    "date": [date(2023, 1, i) for i in range(1, 6)],
+                    "datetime": [datetime.datetime(2023, 1, i) for i in range(1, 6)],
+                    "asset": [0.01, -0.02, 0.03, -0.01, 0.02],
+                }
+            )
+            stats.calmar(invalid)
+
+        with pytest.raises(NoTemporalColumnError):
+            # Without any temporal column, should raise NoTemporalColumnError
+            stats.calmar(df)

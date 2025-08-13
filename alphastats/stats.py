@@ -169,6 +169,60 @@ def sharpe(
 
 
 @overload
+def sortino(
+    returns: pl.Series, rf: float | None = None, periods: int = 252, annualize: bool = True
+) -> float: ...
+
+
+@overload
+def sortino(
+    returns: pl.DataFrame | pl.LazyFrame,
+    rf: float | pl.Series | None = None,
+    periods: int = 252,
+    annualize: bool = True,
+) -> pl.DataFrame: ...
+
+
+def sortino(
+    returns: pl.Series | pl.DataFrame | pl.LazyFrame,
+    rf: float | pl.Series | None = None,
+    periods: int = 252,
+    annualize: bool = True,
+) -> float | pl.DataFrame:
+    """
+    Calculates the Sortino ratio of excess returns.
+
+    The Sortino ratio measures risk-adjusted return by dividing excess return by downside risk.
+
+    Args:
+        returns: Returns series or dataframe
+        rf: Risk-free rate per period (or per-period series)
+        periods: Frequency of returns (252 for daily, 12 for monthly)
+        annualize: Whether to annualize the Sortino ratio
+
+    Returns:
+        Sortino ratio value(s)
+    """
+    returns_ldf = to_lazy(returns)
+
+    excess_returns = to_excess_returns(RETURNS_COLUMNS_SELECTOR, rf)
+    downside = pl.when(excess_returns < 0).then(excess_returns).otherwise(0)
+    downside_risk = downside.pow(2).mean().sqrt()
+
+    sortino_expr = excess_returns.mean() / downside_risk
+
+    if annualize:
+        sortino_expr = sortino_expr * (periods**0.5)
+
+    res = returns_ldf.select(sortino_expr).collect()
+
+    if isinstance(returns, pl.Series):
+        return res.item()
+    else:
+        return res
+
+
+@overload
 def volatility(returns: pl.Series, periods: int = 252, annualize: bool = True) -> float: ...
 
 
@@ -301,3 +355,38 @@ def greeks(
         )
 
     return joined.select(exprs).collect()
+
+
+def calmar(returns: pl.DataFrame | pl.LazyFrame, periods: int = 252) -> pl.DataFrame:
+    """
+    Calculate the Calmar ratio for each numeric return column.
+
+    Calmar = CAGR / |Max Drawdown|
+
+    Notes:
+        - Requires a temporal column to compute CAGR, similar to `cagr`.
+        - Uses compounded CAGR and the absolute value of maximum drawdown over
+          the entire period.
+
+    Args:
+        returns: Returns dataframe or lazyframe (must include a temporal column)
+        periods: Number of periods in a year (e.g., 252 for daily, 12 for monthly)
+
+    Returns:
+        1-row DataFrame with Calmar ratio per numeric column
+    """
+    returns_ldf = to_lazy(returns)
+
+    temporal_col = get_temporal_column(returns_ldf)
+    if temporal_col is None:
+        raise NoTemporalColumnError
+
+    n_years = (temporal_col.last() - temporal_col.first()).dt.total_days() / periods
+
+    cagr_expr = _comp(RETURNS_COLUMNS_SELECTOR).add(1).pow(1 / n_years).sub(1)
+
+    max_dd_abs_expr = _drawdowns(RETURNS_COLUMNS_SELECTOR).min().abs()
+
+    calmar_expr = cagr_expr / max_dd_abs_expr
+
+    return returns_ldf.select(calmar_expr).collect()
