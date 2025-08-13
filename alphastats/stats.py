@@ -518,3 +518,39 @@ def cpc_index(returns: pl.Series | pl.DataFrame | pl.LazyFrame) -> float | pl.Da
         return res.item()
     else:
         return res
+
+
+@overload
+def exposure(returns: pl.Series) -> float: ...
+
+
+@overload
+def exposure(returns: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame: ...
+
+
+def exposure(returns: pl.Series | pl.DataFrame | pl.LazyFrame) -> float | pl.DataFrame:
+    """
+    Calculate Time in Market (exposure) for each numeric return column.
+
+    Exposure is the fraction of periods with non-zero returns over total
+    non-null periods. Returned as a decimal between 0 and 1.
+
+    Args:
+        returns: Returns series or dataframe
+
+    Returns:
+        Exposure value(s)
+    """
+    returns_ldf = to_lazy(returns)
+
+    r = RETURNS_COLUMNS_SELECTOR
+    non_zero = r.ne(0).cast(pl.Int64).sum()
+    total = r.is_not_null().cast(pl.Int64).sum()
+    expr = non_zero / total
+
+    res = returns_ldf.select(expr).collect()
+
+    if isinstance(returns, pl.Series):
+        return res.item()
+    else:
+        return res

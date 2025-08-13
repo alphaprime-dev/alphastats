@@ -942,3 +942,42 @@ class TestCPCIndex:
         s = pl.Series("returns", [-0.01, -0.02, 0.0])
         res = stats.cpc_index(s)
         assert math.isnan(res) or math.isinf(res)
+
+
+class TestExposure:
+    """Tests for Time in Market (exposure)."""
+
+    @pytest.mark.parametrize(
+        "returns_fixture,expected_type",
+        [
+            ("simple_returns_series", float),
+            ("simple_returns_df", pl.DataFrame),
+        ],
+    )
+    def test_exposure_return_types(
+        self, returns_fixture: str, expected_type: type, request: pytest.FixtureRequest
+    ) -> None:
+        data = request.getfixturevalue(returns_fixture)
+        if returns_fixture == "simple_returns_df":
+            assert isinstance(stats.exposure(data), expected_type)
+            assert isinstance(stats.exposure(data.lazy()), expected_type)
+        else:
+            assert isinstance(stats.exposure(data), expected_type)
+
+    def test_exposure_simple_series(self, simple_returns_series: pl.Series) -> None:
+        # [0.01, -0.02, 0.03, -0.01, 0.02] all non-zero -> 5/5 = 1.0
+        assert stats.exposure(simple_returns_series) == 1.0
+
+    def test_exposure_dataframe_values(self, simple_returns_df: pl.DataFrame) -> None:
+        # both columns are fully non-zero
+        res = stats.exposure(simple_returns_df)
+        assert res.to_dict(as_series=False) == {"asset_a": [1.0], "asset_b": [1.0]}
+
+    def test_exposure_with_nulls(self, returns_with_nulls: pl.Series) -> None:
+        # [0.01, None, 0.03, -0.01, None] -> non-zero count=3, total non-null=3 => 1.0
+        assert stats.exposure(returns_with_nulls) == 1.0
+
+    def test_exposure_with_zeros(self) -> None:
+        s = pl.Series("returns", [0.0, 0.01, 0.0, -0.02, 0.0, 0.03])
+        # non-zero = 3, total = 6 => 0.5
+        assert stats.exposure(s) == 0.5
