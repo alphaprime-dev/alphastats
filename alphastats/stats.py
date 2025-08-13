@@ -468,6 +468,79 @@ def calmar(returns: pl.DataFrame | pl.LazyFrame, periods: int = 252) -> pl.DataF
 
 
 @overload
+def information_ratio(
+    returns: pl.Series,
+    benchmark: pl.Series | pl.DataFrame | pl.LazyFrame,
+    periods: int = 252,
+    annualize: bool = True,
+) -> float: ...
+
+
+@overload
+def information_ratio(
+    returns: pl.DataFrame | pl.LazyFrame,
+    benchmark: pl.Series | pl.DataFrame | pl.LazyFrame,
+    periods: int = 252,
+    annualize: bool = True,
+) -> pl.DataFrame: ...
+
+
+def information_ratio(
+    returns: pl.Series | pl.DataFrame | pl.LazyFrame,
+    benchmark: pl.Series | pl.DataFrame | pl.LazyFrame,
+    periods: int = 252,
+    annualize: bool = True,
+) -> float | pl.DataFrame:
+    """
+    Compute the Information Ratio for each numeric return column.
+
+    Information Ratio = mean(active returns) / std(active returns)
+    where active returns = strategy - benchmark. When annualize=True,
+    the ratio is scaled by sqrt(periods).
+
+    Args:
+        returns: Strategy returns series/dataframe
+        benchmark: Benchmark returns (series/dataframe/lazyframe)
+        periods: Number of periods in a year
+        annualize: Whether to annualize the ratio
+
+    Returns:
+        Information Ratio value(s)
+    """
+    returns_ldf = to_lazy(returns)
+    benchmark_ldf = prepare_benchmark(to_lazy(benchmark))
+
+    returns_temporal_col = get_temporal_column(returns_ldf)
+    benchmark_temporal_col = get_temporal_column(benchmark_ldf)
+
+    if returns_temporal_col is not None and benchmark_temporal_col is not None:
+        joined = returns_ldf.join_asof(
+            benchmark_ldf,
+            left_on=returns_temporal_col,
+            right_on=benchmark_temporal_col,
+        )
+    else:
+        joined = pl.concat([returns_ldf, benchmark_ldf], how="horizontal")
+
+    strategy_returns_cols = RETURNS_COLUMNS_SELECTOR - cs.by_name(BENCHMARK_RETURNS_COLNAME)
+
+    exprs: list[pl.Expr] = []
+    for col_name in cs.expand_selector(joined, strategy_returns_cols):
+        active = pl.col(col_name) - pl.col(BENCHMARK_RETURNS_COLNAME)
+        ir = active.mean() / active.std(ddof=1)
+        if annualize:
+            ir = ir * (periods**0.5)
+        exprs.append(ir.alias(col_name))
+
+    res = joined.select(exprs).collect()
+
+    if isinstance(returns, pl.Series):
+        return res.item()
+    else:
+        return res
+
+
+@overload
 def cpc_index(returns: pl.Series) -> float: ...
 
 
@@ -547,6 +620,49 @@ def exposure(returns: pl.Series | pl.DataFrame | pl.LazyFrame) -> float | pl.Dat
     non_zero = r.ne(0).cast(pl.Int64).sum()
     total = r.is_not_null().cast(pl.Int64).sum()
     expr = non_zero / total
+
+    res = returns_ldf.select(expr).collect()
+
+    if isinstance(returns, pl.Series):
+        return res.item()
+    else:
+        return res
+
+
+@overload
+def omega(returns: pl.Series, threshold: float = 0.0) -> float: ...
+
+
+@overload
+def omega(returns: pl.DataFrame | pl.LazyFrame, threshold: float = 0.0) -> pl.DataFrame: ...
+
+
+def omega(
+    returns: pl.Series | pl.DataFrame | pl.LazyFrame, threshold: float = 0.0
+) -> float | pl.DataFrame:
+    """
+    Compute the Omega ratio for each numeric return column at a given threshold.
+
+    Discrete-sample approximation:
+        Omega(θ) = sum(max(0, r - θ)) / sum(max(0, θ - r))
+
+    Args:
+        returns: Returns series or dataframe
+        threshold: Target return θ per period (default 0.0)
+
+    Returns:
+        Omega ratio value(s)
+    """
+    returns_ldf = to_lazy(returns)
+
+    r = RETURNS_COLUMNS_SELECTOR
+    t = pl.lit(float(threshold))
+
+    diff = r - t
+    gains = diff.clip(lower_bound=0).sum()
+    losses = (-diff).clip(lower_bound=0).sum()
+
+    expr = gains / losses
 
     res = returns_ldf.select(expr).collect()
 

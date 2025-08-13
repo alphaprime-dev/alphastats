@@ -1,6 +1,7 @@
 import datetime
 import math
 from datetime import date
+from typing import cast
 
 import polars as pl
 import pytest
@@ -981,3 +982,126 @@ class TestExposure:
         s = pl.Series("returns", [0.0, 0.01, 0.0, -0.02, 0.0, 0.03])
         # non-zero = 3, total = 6 => 0.5
         assert stats.exposure(s) == 0.5
+
+
+class TestOmega:
+    """Tests for Omega ratio."""
+
+    @pytest.mark.parametrize(
+        "returns_fixture,expected_type",
+        [
+            ("simple_returns_series", float),
+            ("simple_returns_df", pl.DataFrame),
+        ],
+    )
+    def test_omega_return_types(
+        self, returns_fixture: str, expected_type: type, request: pytest.FixtureRequest
+    ) -> None:
+        data = request.getfixturevalue(returns_fixture)
+        if returns_fixture == "simple_returns_df":
+            assert isinstance(stats.omega(data), expected_type)
+            assert isinstance(stats.omega(data.lazy()), expected_type)
+        else:
+            assert isinstance(stats.omega(data), expected_type)
+
+    def test_omega_simple_series_default_threshold(self, simple_returns_series: pl.Series) -> None:
+        # r = [0.01, -0.02, 0.03, -0.01, 0.02]
+        # θ=0.0: gains=sum([0.01,0.03,0.02])=0.06, losses=sum([0.02,0.01])=0.03 → 2.0
+        assert stats.omega(simple_returns_series) == 2.0
+
+    def test_omega_series_custom_threshold(self) -> None:
+        # θ=0.01: (r-θ)+ sums: [0,0,0.02,0,0.01] => 0.03
+        # (θ-r)+ sums: [0,0.03,0,0.02,0] => 0.05 → 0.6
+        s = pl.Series("returns", [0.01, -0.02, 0.03, -0.01, 0.02])
+        assert stats.omega(s, threshold=0.01) == 0.6
+
+    def test_omega_dataframe_values(self, simple_returns_df: pl.DataFrame) -> None:
+        res = stats.omega(simple_returns_df)
+        assert res.to_dict(as_series=False) == {"asset_a": [2.0], "asset_b": [2.0]}
+
+    def test_omega_with_nulls(self, returns_with_nulls: pl.Series) -> None:
+        # [0.01, None, 0.03, -0.01, None]
+        # gains=0.04, losses=0.01 → 4.0
+        assert stats.omega(returns_with_nulls) == 4.0
+
+    def test_omega_edge_no_losses(self) -> None:
+        s = pl.Series("returns", [0.02, 0.03, 0.01])
+        val = stats.omega(s)
+        assert math.isinf(val) or math.isnan(val)
+
+
+class TestInformationRatio:
+    """Tests for Information Ratio."""
+
+    @pytest.mark.parametrize(
+        "returns_fixture,expected_type",
+        [
+            ("simple_returns_series", float),
+            ("simple_returns_df", pl.DataFrame),
+        ],
+    )
+    def test_ir_return_types(
+        self,
+        returns_fixture: str,
+        expected_type: type,
+        request: pytest.FixtureRequest,
+        simple_benchmark_df: pl.DataFrame,
+        simple_benchmark_series: pl.Series,
+    ) -> None:
+        data = request.getfixturevalue(returns_fixture)
+        if returns_fixture == "simple_returns_df":
+            assert isinstance(stats.information_ratio(data, simple_benchmark_df), expected_type)
+            assert isinstance(
+                stats.information_ratio(data.lazy(), simple_benchmark_df.lazy()), expected_type
+            )
+        else:
+            assert isinstance(stats.information_ratio(data, simple_benchmark_series), expected_type)
+
+    def test_ir_simple_series(
+        self, simple_returns_series: pl.Series, simple_benchmark_series: pl.Series
+    ) -> None:
+        # given
+        # active = [0.005, -0.01, 0.015, -0.005, 0.01]
+        # mean=0.003, std(sample)=? compute explicitly
+        active = simple_returns_series - simple_benchmark_series
+        expected = cast(float, active.mean()) / cast(float, active.std(ddof=1)) * (252**0.5)
+
+        # when
+        val = stats.information_ratio(simple_returns_series, simple_benchmark_series)
+
+        # then
+        assert pytest.approx(val, rel=1e-3) == expected
+
+    def test_ir_dataframe_values(
+        self, simple_returns_df: pl.DataFrame, simple_benchmark_df: pl.DataFrame
+    ) -> None:
+        # given
+        # asset_a
+        active_a = simple_returns_df["asset_a"] - simple_benchmark_df["_benchmark_returns"]
+        expected_a = cast(float, active_a.mean()) / cast(float, active_a.std(ddof=1)) * (252**0.5)
+        # asset_b
+        active_b = simple_returns_df["asset_b"] - simple_benchmark_df["_benchmark_returns"]
+        expected_b = cast(float, active_b.mean()) / cast(float, active_b.std(ddof=1)) * (252**0.5)
+
+        # when
+        res = stats.information_ratio(simple_returns_df, simple_benchmark_df)
+
+        # then
+        res_dict = res.to_dict(as_series=False)
+        assert pytest.approx(res_dict["asset_a"][0], rel=1e-3) == expected_a
+        assert pytest.approx(res_dict["asset_b"][0], rel=1e-3) == expected_b
+
+    def test_ir_non_annualized(
+        self, simple_returns_series: pl.Series, simple_benchmark_series: pl.Series
+    ) -> None:
+        # given
+        active = simple_returns_series - simple_benchmark_series
+        expected = cast(float, active.mean()) / cast(float, active.std(ddof=1))
+
+        # when
+        val = stats.information_ratio(
+            simple_returns_series, simple_benchmark_series, annualize=False
+        )
+
+        # then
+        assert pytest.approx(val, rel=1e-3) == expected
