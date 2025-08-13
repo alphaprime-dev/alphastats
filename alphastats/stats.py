@@ -1,3 +1,4 @@
+import math
 from typing import overload
 
 import polars as pl
@@ -223,6 +224,80 @@ def sortino(
 
 
 @overload
+def probabilistic_sharpe_ratio(
+    returns: pl.Series, rf: float | pl.Series | None = None, sr_benchmark: float = 0.0
+) -> float: ...
+
+
+@overload
+def probabilistic_sharpe_ratio(
+    returns: pl.DataFrame | pl.LazyFrame,
+    rf: float | pl.Series | None = None,
+    sr_benchmark: float = 0.0,
+) -> pl.DataFrame: ...
+
+
+def probabilistic_sharpe_ratio(
+    returns: pl.Series | pl.DataFrame | pl.LazyFrame,
+    rf: float | pl.Series | None = None,
+    sr_benchmark: float = 0.0,
+) -> float | pl.DataFrame:
+    """
+    Compute the Probabilistic Sharpe Ratio (PSR).
+
+    PSR is the probability that the true Sharpe ratio exceeds a benchmark
+    Sharpe ratio, adjusting for sample size and higher moments (skewness and
+    kurtosis), following López de Prado.
+
+    Args:
+        returns: Returns series or dataframe
+        rf: Risk-free rate per period (or per-period series)
+        sr_benchmark: Benchmark Sharpe ratio to test against (SR*)
+
+    Returns:
+        Probability value(s) in [0, 1]
+
+    Notes:
+        - Uses the sample Sharpe ratio without annualization.
+        - Kurtosis here is the standard (non-excess) kurtosis; underlying
+          computation adjusts Polars' excess kurtosis by +3.
+    """
+    returns_ldf = to_lazy(returns)
+
+    excess_returns = to_excess_returns(RETURNS_COLUMNS_SELECTOR, rf)
+
+    sr_expr = excess_returns.mean() / excess_returns.std(ddof=1)
+    t_expr = excess_returns.count()
+    skew_expr = excess_returns.skew()
+    kurt_expr = excess_returns.kurtosis() + 3
+
+    bench = pl.lit(float(sr_benchmark))
+
+    denom = ((skew_expr * sr_expr).mul(-1).add(1) + ((kurt_expr - 1) / 4) * (sr_expr**2)).sqrt()
+    z_expr = ((sr_expr - bench) * (t_expr - 1).sqrt()) / denom
+
+    z_scores = returns_ldf.select(z_expr).collect()
+
+    def _phi(z: float) -> float:
+        return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+    if isinstance(returns, pl.Series):
+        return _phi(z_scores.item())
+    else:
+        psr_vals = {c: [_phi(z_scores[c][0])] for c in z_scores.columns}
+        return pl.DataFrame(psr_vals)
+
+
+def psr(
+    returns: pl.Series | pl.DataFrame | pl.LazyFrame,
+    rf: float | pl.Series | None = None,
+    sr_benchmark: float = 0.0,
+) -> float | pl.DataFrame:
+    """Alias for probabilistic_sharpe_ratio."""
+    return probabilistic_sharpe_ratio(returns, rf=rf, sr_benchmark=sr_benchmark)
+
+
+@overload
 def volatility(returns: pl.Series, periods: int = 252, annualize: bool = True) -> float: ...
 
 
@@ -390,3 +465,56 @@ def calmar(returns: pl.DataFrame | pl.LazyFrame, periods: int = 252) -> pl.DataF
     calmar_expr = cagr_expr / max_dd_abs_expr
 
     return returns_ldf.select(calmar_expr).collect()
+
+
+@overload
+def cpc_index(returns: pl.Series) -> float: ...
+
+
+@overload
+def cpc_index(returns: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame: ...
+
+
+def cpc_index(returns: pl.Series | pl.DataFrame | pl.LazyFrame) -> float | pl.DataFrame:
+    """
+    Compute the CPC Index for each numeric return column.
+
+    CPC Index = Profit Factor * Payoff Ratio * Win Rate
+
+    Where:
+        - Profit Factor = sum of gains / absolute sum of losses
+        - Payoff Ratio = average gain / average loss (absolute)
+        - Win Rate = number of gain periods / total non-null periods
+
+    Args:
+        returns: Returns series or dataframe
+
+    Returns:
+        CPC Index value(s)
+    """
+    returns_ldf = to_lazy(returns)
+
+    r = RETURNS_COLUMNS_SELECTOR
+
+    gains_sum = pl.when(r > 0).then(r).otherwise(0).sum()
+    losses_sum_abs = pl.when(r < 0).then(r).otherwise(0).sum().abs()
+
+    wins_count = (r > 0).cast(pl.Int64).sum()
+    losses_count = (r < 0).cast(pl.Int64).sum()
+    total_count = r.is_not_null().cast(pl.Int64).sum()
+
+    avg_win = gains_sum / wins_count
+    avg_loss_abs = losses_sum_abs / losses_count
+
+    profit_factor = gains_sum / losses_sum_abs
+    payoff_ratio = avg_win / avg_loss_abs
+    win_rate = wins_count / total_count
+
+    expr = profit_factor * payoff_ratio * win_rate
+
+    res = returns_ldf.select(expr).collect()
+
+    if isinstance(returns, pl.Series):
+        return res.item()
+    else:
+        return res

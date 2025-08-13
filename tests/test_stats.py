@@ -311,6 +311,47 @@ class TestSharpe:
         assert math.isnan(result)
 
 
+class TestProbabilisticSharpeRatio:
+    """Tests for the Probabilistic Sharpe Ratio (PSR)."""
+
+    @pytest.mark.parametrize(
+        "returns_fixture,expected_type",
+        [
+            ("simple_returns_series", float),
+            ("simple_returns_df", pl.DataFrame),
+        ],
+    )
+    def test_psr_return_types(
+        self, returns_fixture: str, expected_type: type, request: pytest.FixtureRequest
+    ) -> None:
+        data = request.getfixturevalue(returns_fixture)
+        if returns_fixture == "simple_returns_df":
+            assert isinstance(stats.probabilistic_sharpe_ratio(data), expected_type)
+            assert isinstance(stats.psr(data), expected_type)
+            assert isinstance(stats.probabilistic_sharpe_ratio(data.lazy()), expected_type)
+        else:
+            assert isinstance(stats.probabilistic_sharpe_ratio(data), expected_type)
+            assert isinstance(stats.psr(data), expected_type)
+
+    def test_psr_basic_series(self, simple_returns_series: pl.Series) -> None:
+        # Deterministic value based on fixed inputs
+        val = stats.probabilistic_sharpe_ratio(simple_returns_series)
+        assert val == snapshot(0.7132960099383969)
+
+    def test_psr_with_benchmark(self, simple_returns_series: pl.Series) -> None:
+        # With a higher benchmark SR, probability should decrease
+        base = stats.psr(simple_returns_series, sr_benchmark=0.0)
+        lower = stats.psr(simple_returns_series, sr_benchmark=1.0)
+        assert lower <= base
+
+    def test_psr_dataframe_values(self, simple_returns_df: pl.DataFrame) -> None:
+        res = stats.psr(simple_returns_df)
+        assert isinstance(res, pl.DataFrame)
+        assert set(res.columns) == {"asset_a", "asset_b"}
+        for col in res.columns:
+            assert 0.0 <= res[col][0] <= 1.0
+
+
 class TestSortino:
     """Test cases for the Sortino ratio function."""
 
@@ -841,3 +882,63 @@ class TestCalmar:
         with pytest.raises(NoTemporalColumnError):
             # Without any temporal column, should raise NoTemporalColumnError
             stats.calmar(df)
+
+
+class TestCPCIndex:
+    """Tests for the CPC Index metric."""
+
+    @pytest.mark.parametrize(
+        "returns_fixture,expected_type",
+        [
+            ("simple_returns_series", float),
+            ("simple_returns_df", pl.DataFrame),
+        ],
+    )
+    def test_cpc_index_return_types(
+        self, returns_fixture: str, expected_type: type, request: pytest.FixtureRequest
+    ) -> None:
+        data = request.getfixturevalue(returns_fixture)
+        if returns_fixture == "simple_returns_df":
+            assert isinstance(stats.cpc_index(data), expected_type)
+            assert isinstance(stats.cpc_index(data.lazy()), expected_type)
+        else:
+            assert isinstance(stats.cpc_index(data), expected_type)
+
+    def test_cpc_index_simple_series(self, simple_returns_series: pl.Series) -> None:
+        # Manual computation on fixture [0.01, -0.02, 0.03, -0.01, 0.02]
+        # gains_sum = 0.01 + 0.03 + 0.02 = 0.06
+        # losses_sum_abs = | -0.02 + -0.01 | = 0.03
+        # wins_count = 3, losses_count = 2, total = 5
+        # avg_win = 0.06 / 3 = 0.02
+        # avg_loss_abs = 0.03 / 2 = 0.015
+        # profit_factor = 0.06 / 0.03 = 2.0
+        # payoff_ratio = 0.02 / 0.015 = 1.3333333333333333
+        # win_rate = 3 / 5 = 0.6
+        # CPC = 2.0 * 1.3333333333333333 * 0.6 = 1.6
+        result = stats.cpc_index(simple_returns_series)
+        assert result == 1.6
+
+    def test_cpc_index_dataframe_values(self, simple_returns_df: pl.DataFrame) -> None:
+        # asset_b has same distribution as a; CPC should match
+        res = stats.cpc_index(simple_returns_df)
+        assert res.to_dict(as_series=False) == snapshot({"asset_a": [1.6], "asset_b": [1.6]})
+
+    def test_cpc_index_with_nulls(self, returns_with_nulls: pl.Series) -> None:
+        # returns_with_nulls: [0.01, None, 0.03, -0.01, None]
+        # gains_sum = 0.04, losses_sum_abs = 0.01
+        # wins = 2, losses = 1, total = 3
+        # avg_win = 0.02, avg_loss_abs = 0.01
+        # PF=4.0, PR=2.0, WR=2/3 -> CPC = 16/3 = 5.333333333333333
+        val = stats.cpc_index(returns_with_nulls)
+        assert val == 5.333333333333333
+
+    def test_cpc_index_edge_no_losses(self) -> None:
+        s = pl.Series("returns", [0.01, 0.02, 0.0])
+        # losses_sum_abs = 0 → PF and PR divisions yield inf/NaN; product should be NaN
+        res = stats.cpc_index(s)
+        assert math.isnan(res) or math.isinf(res)
+
+    def test_cpc_index_edge_no_wins(self) -> None:
+        s = pl.Series("returns", [-0.01, -0.02, 0.0])
+        res = stats.cpc_index(s)
+        assert math.isnan(res) or math.isinf(res)
