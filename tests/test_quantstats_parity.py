@@ -6,9 +6,10 @@ from typing import SupportsFloat, cast
 import pandas as pd
 import polars as pl
 import pytest
+import quantstats.reports as qr
 import quantstats.stats as qs
 
-from alphastats import stats
+from alphastats import reports, stats
 
 pytestmark = [
     pytest.mark.filterwarnings("ignore:Mean of empty slice:RuntimeWarning"),
@@ -281,3 +282,80 @@ def test_report_window_wrappers_match_equivalent_quantstats_outputs() -> None:
     assert_close(stats.five_year(polars_returns)["asset"][0], filtered_cagr(pandas_returns, 5))
     assert_close(stats.ten_year(polars_returns)["asset"][0], filtered_cagr(pandas_returns, 10))
     assert_close(stats.all_time(polars_returns)["asset"][0], filtered_cagr(pandas_returns))
+
+
+def test_basic_report_metrics_match_quantstats_values() -> None:
+    pandas_returns = returns_series()
+    pandas_benchmark = benchmark_series()
+    polars_returns = to_polars_frame(pandas_returns)
+    polars_benchmark = to_polars_frame(pandas_benchmark, "benchmark")
+
+    actual = reports.metrics(
+        polars_returns,
+        benchmark=polars_benchmark,
+        display=False,
+        mode="basic",
+    )
+    expected = qr.metrics(
+        pandas_returns,
+        benchmark=pandas_benchmark,
+        display=False,
+        mode="basic",
+    )
+
+    assert actual is not None
+    actual_by_metric = {row["Metric"]: row for row in actual.to_dicts()}
+    for metric in [
+        "Start Period",
+        "End Period",
+        "Time in Market",
+        "Cumulative Return",
+        "CAGR﹪",
+        "Sharpe",
+        "Sortino",
+        "Max Drawdown",
+        "Gain/Pain Ratio",
+        "Payoff Ratio",
+        "Profit Factor",
+        "Recovery Factor",
+        "Serenity Index",
+    ]:
+        assert actual_by_metric[metric]["Benchmark"] == str(expected.loc[metric, "Benchmark"])
+        assert actual_by_metric[metric]["Strategy"] == str(expected.loc[metric, "Strategy"])
+
+
+def test_full_report_metrics_include_benchmark_relative_rows() -> None:
+    pandas_returns = returns_series()
+    pandas_benchmark = benchmark_series()
+    polars_returns = to_polars_frame(pandas_returns)
+    polars_benchmark = to_polars_frame(pandas_benchmark, "benchmark")
+
+    actual = reports.metrics(
+        polars_returns,
+        benchmark=polars_benchmark,
+        display=False,
+        mode="full",
+    )
+    expected = qr.metrics(
+        pandas_returns,
+        benchmark=pandas_benchmark,
+        display=False,
+        mode="full",
+    )
+
+    assert actual is not None
+    actual_by_metric = {row["Metric"]: row for row in actual.to_dicts()}
+    for metric in [
+        "Volatility (ann.)",
+        "Calmar",
+        "Skew",
+        "Kurtosis",
+        "Beta",
+        "Alpha",
+    ]:
+        assert actual_by_metric[metric]["Benchmark"] == str(expected.loc[metric, "Benchmark"])
+        assert actual_by_metric[metric]["Strategy"] == str(expected.loc[metric, "Strategy"])
+
+    for metric in ["R^2", "Information Ratio"]:
+        assert actual_by_metric[metric]["Benchmark"] == "-"
+        assert actual_by_metric[metric]["Strategy"] == str(expected.loc[metric, "Strategy"])
