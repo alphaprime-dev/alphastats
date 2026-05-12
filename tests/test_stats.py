@@ -1,5 +1,6 @@
 import datetime
 import math
+from collections.abc import Callable
 from datetime import date
 from typing import cast
 
@@ -155,28 +156,28 @@ class TestCagr:
         """Test basic CAGR calculation."""
         result = stats.cagr(simple_returns_df, periods=252)
         assert result.to_dict(as_series=False) == snapshot(
-            {"asset_a": [5.238246821747209], "asset_b": [5.238246821747209]}
+            {"asset_a": [3.325636719291219], "asset_b": [3.325636719291219]}
         )
 
     def test_cagr_with_risk_free_rate(self, simple_returns_df: pl.DataFrame) -> None:
         """Test CAGR calculation with risk-free rate."""
         result = stats.cagr(simple_returns_df, rf=0.002, periods=252)
         assert result.to_dict(as_series=False) == snapshot(
-            {"asset_a": [2.3321544328343586], "asset_b": [2.3321544328344044]}
+            {"asset_a": [1.6192689635571114], "asset_b": [1.6192689635571402]}
         )
 
     def test_cagr_non_compound(self, simple_returns_df: pl.DataFrame) -> None:
         """Test CAGR calculation without compounding."""
         result = stats.cagr(simple_returns_df, compound=False, periods=252)
         assert result.to_dict(as_series=False) == snapshot(
-            {"asset_a": [5.437913785074596], "asset_b": [5.437913785074596]}
+            {"asset_a": [3.4360468598701495], "asset_b": [3.4360468598701495]}
         )
 
     def test_cagr_different_periods(self, simple_returns_df: pl.DataFrame) -> None:
         """Test CAGR calculation with different period frequencies."""
         result = stats.cagr(simple_returns_df, periods=12)  # Monthly
         assert result.to_dict(as_series=False) == snapshot(
-            {"asset_a": [0.09108885990481008], "asset_b": [0.09108885990481008]}
+            {"asset_a": [0.0722303532497861], "asset_b": [0.0722303532497861]}
         )
 
     def test_cagr_extreme_values(self) -> None:
@@ -337,12 +338,11 @@ class TestProbabilisticSharpeRatio:
     def test_psr_basic_series(self, simple_returns_series: pl.Series) -> None:
         # Deterministic value based on fixed inputs
         val = stats.probabilistic_sharpe_ratio(simple_returns_series)
-        assert val == snapshot(0.7132960099383969)
+        assert val == snapshot(0.7180057951953357)
 
-    def test_psr_with_benchmark(self, simple_returns_series: pl.Series) -> None:
-        # With a higher benchmark SR, probability should decrease
-        base = stats.psr(simple_returns_series, sr_benchmark=0.0)
-        lower = stats.psr(simple_returns_series, sr_benchmark=1.0)
+    def test_psr_with_risk_free_rate(self, simple_returns_series: pl.Series) -> None:
+        base = stats.psr(simple_returns_series, rf=0.0)
+        lower = stats.psr(simple_returns_series, rf=0.1)
         assert lower <= base
 
     def test_psr_dataframe_values(self, simple_returns_df: pl.DataFrame) -> None:
@@ -1076,7 +1076,7 @@ class TestInformationRatio:
         # active = [0.005, -0.01, 0.015, -0.005, 0.01]
         # mean=0.003, std(sample)=? compute explicitly
         active = simple_returns_series - simple_benchmark_series
-        expected = cast(float, active.mean()) / cast(float, active.std(ddof=1)) * (252**0.5)
+        expected = cast(float, active.mean()) / cast(float, active.std(ddof=1))
 
         # when
         val = stats.information_ratio(simple_returns_series, simple_benchmark_series)
@@ -1084,16 +1084,204 @@ class TestInformationRatio:
         # then
         assert pytest.approx(val, rel=1e-3) == expected
 
+
+class TestDistributionAndTradeMetrics:
+    """Tests for distribution, expectancy, and trade outcome metrics."""
+
+    def test_distribution_and_trade_metrics_series(self, simple_returns_series: pl.Series) -> None:
+        assert stats.risk_free_rate(0.05, periods=252) == pytest.approx((1.05 ** (1 / 252)) - 1)
+        assert stats.skew(simple_returns_series) == pytest.approx(-0.2355139364088061)
+        assert stats.kurtosis(simple_returns_series) == pytest.approx(-1.9632233639805297)
+        assert stats.expected_daily(simple_returns_series) == pytest.approx(
+            (1.01 * 0.98 * 1.03 * 0.99 * 1.02) ** (1 / 5) - 1
+        )
+        assert stats.win_rate(simple_returns_series) == pytest.approx(3 / 5)
+        assert stats.avg_return(simple_returns_series) == pytest.approx(0.006)
+        assert stats.avg_win(simple_returns_series) == pytest.approx(0.02)
+        assert stats.avg_loss(simple_returns_series) == pytest.approx(-0.015)
+        assert stats.payoff_ratio(simple_returns_series) == pytest.approx(0.02 / 0.015)
+        assert stats.profit_factor(simple_returns_series) == pytest.approx(2.0)
+        assert stats.gain_to_pain_ratio(simple_returns_series) == pytest.approx(1.0)
+        assert stats.kelly_criterion(simple_returns_series) == pytest.approx(0.3)
+        assert stats.risk_of_ruin(simple_returns_series) == pytest.approx((0.4 / 1.6) ** 5)
+        assert stats.consecutive_wins(simple_returns_series) == 1
+        assert stats.consecutive_losses(simple_returns_series) == 1
+
+
+class TestTailAndRiskMetrics:
+    """Tests for tail, drawdown-risk, and capital-risk metrics."""
+
+    def test_tail_and_risk_metrics_series(self, simple_returns_series: pl.Series) -> None:
+        var_value = stats.value_at_risk(simple_returns_series)
+        cvar_value = stats.conditional_value_at_risk(simple_returns_series)
+        assert isinstance(var_value, float)
+        assert isinstance(cvar_value, float)
+        assert cvar_value <= var_value
+        assert stats.tail_ratio(simple_returns_series) > 0
+        assert stats.common_sense_ratio(simple_returns_series) > 0
+        assert stats.outlier_win_ratio(simple_returns_series) > 0
+        assert stats.outlier_loss_ratio(simple_returns_series) > 0
+        assert stats.recovery_factor(simple_returns_series) == pytest.approx(1.5)
+        assert stats.ulcer_index(simple_returns_series) > 0
+        assert math.isfinite(stats.serenity_index(simple_returns_series))
+
+
+class TestSmartRatios:
+    """Tests for autocorrelation-adjusted ratio variants."""
+
+    def test_smart_and_adjusted_ratios(self, simple_returns_series: pl.Series) -> None:
+        penalty = stats.autocorr_penalty(simple_returns_series)
+        assert isinstance(penalty, float)
+        assert penalty > 0
+        assert stats.smart_sharpe(simple_returns_series) == pytest.approx(
+            stats.sharpe(simple_returns_series) / penalty
+        )
+        assert stats.smart_sortino(simple_returns_series) == pytest.approx(
+            stats.sortino(simple_returns_series) / penalty
+        )
+        assert stats.adjusted_sortino(simple_returns_series) == pytest.approx(
+            stats.sortino(simple_returns_series) / math.sqrt(2)
+        )
+        assert stats.smart_adjusted_sortino(simple_returns_series) == pytest.approx(
+            stats.smart_sortino(simple_returns_series) / math.sqrt(2)
+        )
+
+
+class TestMetricReturnShapes:
+    """Tests for common DataFrame output shape conventions."""
+
+    def test_dataframe_metric_return_shapes(self, simple_returns_df: pl.DataFrame) -> None:
+        metric_names = [
+            "skew",
+            "kurtosis",
+            "expected_daily",
+            "avg_return",
+            "avg_win",
+            "avg_loss",
+            "win_rate",
+            "payoff_ratio",
+            "profit_factor",
+            "gain_to_pain_ratio",
+            "common_sense_ratio",
+            "tail_ratio",
+            "outlier_win_ratio",
+            "outlier_loss_ratio",
+            "kelly_criterion",
+            "risk_of_ruin",
+            "value_at_risk",
+            "conditional_value_at_risk",
+            "recovery_factor",
+            "ulcer_index",
+            "serenity_index",
+            "smart_sharpe",
+            "smart_sortino",
+            "adjusted_sortino",
+            "smart_adjusted_sortino",
+        ]
+        for metric_name in metric_names:
+            result = getattr(stats, metric_name)(simple_returns_df)
+            assert isinstance(result, pl.DataFrame), metric_name
+            assert result.columns == ["asset_a", "asset_b"], metric_name
+            assert result.height == 1, metric_name
+
+
+class TestBenchmarkDerivedMetrics:
+    """Tests for benchmark-relative metrics not covered elsewhere."""
+
+    def test_benchmark_metrics(
+        self, simple_returns_df: pl.DataFrame, simple_benchmark_df: pl.DataFrame
+    ) -> None:
+        corr = stats.correlation(simple_returns_df, simple_benchmark_df)
+        r_squared = stats.r_squared(simple_returns_df, simple_benchmark_df)
+        treynor = stats.treynor_ratio(simple_returns_df, simple_benchmark_df)
+        assert isinstance(corr, pl.DataFrame)
+        assert isinstance(r_squared, pl.DataFrame)
+        assert isinstance(treynor, pl.DataFrame)
+        assert r_squared["asset_a"][0] == pytest.approx(corr["asset_a"][0] ** 2)
+        assert treynor["asset_a"][0] == pytest.approx(
+            stats.comp(simple_returns_df)["asset_a"][0]
+            / stats.greeks(simple_returns_df, simple_benchmark_df)["asset_a"][0]["beta"]
+        )
+
+
+class TestDrawdownPeriodMetrics:
+    """Tests for drawdown period summary metrics."""
+
+    def test_drawdown_period_metrics(self) -> None:
+        returns = pl.DataFrame(
+            {
+                "date": [date(2023, 1, i) for i in range(1, 8)],
+                "asset": [0.02, -0.01, -0.02, 0.05, -0.01, -0.01, 0.03],
+            }
+        )
+        longest = cast(pl.DataFrame, stats.longest_drawdown_days(returns))
+        avg_days = cast(pl.DataFrame, stats.avg_drawdown_days(returns))
+        avg_dd = cast(pl.DataFrame, stats.avg_drawdown(returns))
+        assert longest.to_dict(as_series=False) == {"asset": [2]}
+        assert avg_days.to_dict(as_series=False) == {"asset": [2.0]}
+        assert avg_dd["asset"][0] < 0
+
+
+class TestCalendarAggregatedMetrics:
+    """Tests for calendar and trailing-window wrapper metrics."""
+
+    def test_calendar_aggregated_metrics(self) -> None:
+        returns = pl.DataFrame(
+            {
+                "date": [
+                    date(2022, 12, 30),
+                    date(2023, 1, 2),
+                    date(2023, 1, 31),
+                    date(2023, 2, 1),
+                    date(2023, 3, 1),
+                    date(2023, 6, 1),
+                    date(2023, 12, 29),
+                ],
+                "asset": [0.01, 0.02, -0.01, 0.03, -0.02, 0.04, 0.01],
+            }
+        )
+        funcs: list[Callable[[pl.DataFrame], object]] = [
+            stats.expected_monthly,
+            stats.expected_yearly,
+            stats.gain_to_pain_ratio_1m,
+            stats.best_month,
+            stats.worst_month,
+            stats.best_year,
+            stats.worst_year,
+            stats.avg_up_month,
+            stats.avg_down_month,
+            stats.win_month,
+            stats.win_quarter,
+            stats.win_year,
+            stats.mtd,
+            stats.three_month,
+            stats.six_month,
+            stats.ytd,
+            stats.one_year,
+            stats.three_year,
+            stats.five_year,
+            stats.ten_year,
+            stats.all_time,
+        ]
+        for func in funcs:
+            result = cast(pl.DataFrame, func(returns))
+            assert isinstance(result, pl.DataFrame), func.__name__
+            assert result.columns == ["asset"], func.__name__
+
+
+class TestInformationRatioValues:
+    """Tests for Information Ratio value calculations."""
+
     def test_ir_dataframe_values(
         self, simple_returns_df: pl.DataFrame, simple_benchmark_df: pl.DataFrame
     ) -> None:
         # given
         # asset_a
         active_a = simple_returns_df["asset_a"] - simple_benchmark_df["_benchmark_returns"]
-        expected_a = cast(float, active_a.mean()) / cast(float, active_a.std(ddof=1)) * (252**0.5)
+        expected_a = cast(float, active_a.mean()) / cast(float, active_a.std(ddof=1))
         # asset_b
         active_b = simple_returns_df["asset_b"] - simple_benchmark_df["_benchmark_returns"]
-        expected_b = cast(float, active_b.mean()) / cast(float, active_b.std(ddof=1)) * (252**0.5)
+        expected_b = cast(float, active_b.mean()) / cast(float, active_b.std(ddof=1))
 
         # when
         res = stats.information_ratio(simple_returns_df, simple_benchmark_df)
