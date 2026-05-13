@@ -10,7 +10,7 @@ dependencies = ["polars>=1.0.0,<2"]
 dev = [
     "inline-snapshot>=0.23.2",
     "mypy==1.15.0",
-    "pre-commit>=4.2.0",
+    "prek>=0.3.1,<0.4.0",
     "pytest>=8.3.5",
     "pytest-asyncio>=1.0.0",
     "quantstats>=0.0.81",
