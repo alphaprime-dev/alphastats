@@ -133,21 +133,7 @@ def metrics(
     add("Omega", _series_metric(report, stats.omega))
     add_sep()
 
-    drawdowns = {
-        name: _drawdown_details(series, report.dates) for name, series in report.series.items()
-    }
-    add(
-        "Max Drawdown", {name: details["max_drawdown"] * pct for name, details in drawdowns.items()}
-    )
-    add("Max DD Date", {name: _format_date(details["date"]) for name, details in drawdowns.items()})
-    add(
-        "Max DD Period Start",
-        {name: _format_date(details["start"]) for name, details in drawdowns.items()},
-    )
-    add(
-        "Max DD Period End",
-        {name: _format_date(details["end"]) for name, details in drawdowns.items()},
-    )
+    add("Max Drawdown", _series_metric(report, stats.max_drawdown, multiplier=pct))
     add("Longest DD Days", _series_metric(report, stats.longest_drawdown_days))
 
     if full:
@@ -184,26 +170,9 @@ def metrics(
         )
         add("Skew", _series_metric(report, stats.skew))
         add("Kurtosis", _series_metric(report, stats.kurtosis))
-        add(
-            "Avg. Return",
-            _series_metric(
-                report,
-                lambda series: stats.avg_return(series, compounded=compounded),
-                multiplier=pct,
-            ),
-        )
-        add(
-            "Avg. Win",
-            _series_metric(
-                report, lambda series: stats.avg_win(series, compounded=compounded), multiplier=pct
-            ),
-        )
-        add(
-            "Avg. Loss",
-            _series_metric(
-                report, lambda series: stats.avg_loss(series, compounded=compounded), multiplier=pct
-            ),
-        )
+        add("Expected Daily", _series_metric(report, stats.expected_daily, multiplier=pct))
+        add("Expected Monthly", _monthly_metric(report, stats.expected_monthly, multiplier=pct))
+        add("Expected Yearly", _monthly_metric(report, stats.expected_yearly, multiplier=pct))
         add("Kelly Criterion", _series_metric(report, stats.kelly_criterion, multiplier=pct))
         add("Risk of Ruin", _series_metric(report, stats.risk_of_ruin))
         add("Daily Value-at-Risk", _series_metric(report, stats.value_at_risk, multiplier=pct))
@@ -505,32 +474,6 @@ def _cagr(series: pl.Series, *, rf: float, compounded: bool, periods: int) -> fl
     n_years = len(values) / periods
     total = math.prod(1 + value for value in values) if compounded else sum(values) + 1
     return total ** (1 / n_years) - 1
-
-
-def _drawdown_details(series: pl.Series, dates: list[Any] | None) -> dict[str, Any]:
-    drawdowns = stats.to_drawdowns(series).to_list()
-    if not drawdowns:
-        return {"max_drawdown": math.nan, "date": None, "start": None, "end": None}
-    min_value = min(float(value) for value in drawdowns if value is not None)
-    min_idx = next(idx for idx, value in enumerate(drawdowns) if value == min_value)
-
-    start_idx = min_idx
-    while start_idx > 0 and drawdowns[start_idx - 1] is not None and drawdowns[start_idx - 1] < 0:
-        start_idx -= 1
-    end_idx = min_idx
-    while (
-        end_idx + 1 < len(drawdowns)
-        and drawdowns[end_idx + 1] is not None
-        and drawdowns[end_idx + 1] < 0
-    ):
-        end_idx += 1
-
-    return {
-        "max_drawdown": min_value,
-        "date": _date_at(dates, min_idx),
-        "start": _date_at(dates, start_idx),
-        "end": _date_at(dates, end_idx),
-    }
 
 
 def _period_dates(

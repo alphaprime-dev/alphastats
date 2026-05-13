@@ -54,6 +54,119 @@ def to_polars_series(series: pd.Series, column_name: str = "asset") -> pl.Series
     return pl.Series(column_name, [float(value) for value in series.to_list()])
 
 
+LEGACY_BASIC_REPORT_METRICS = [
+    "Start Period",
+    "End Period",
+    "Risk-Free Rate",
+    "Time in Market",
+    "Cumulative Return",
+    "CAGR﹪",
+    "Sharpe",
+    "Prob. Sharpe Ratio",
+    "Sortino",
+    "Sortino/√2",
+    "Omega",
+    "Max Drawdown",
+    "Longest DD Days",
+    "Gain/Pain Ratio",
+    "Gain/Pain (1M)",
+    "Payoff Ratio",
+    "Profit Factor",
+    "Common Sense Ratio",
+    "CPC Index",
+    "Tail Ratio",
+    "Outlier Win Ratio",
+    "Outlier Loss Ratio",
+    "MTD",
+    "3M",
+    "6M",
+    "YTD",
+    "1Y",
+    "3Y (ann.)",
+    "5Y (ann.)",
+    "10Y (ann.)",
+    "All-time (ann.)",
+    "Avg. Drawdown",
+    "Avg. Drawdown Days",
+    "Recovery Factor",
+    "Ulcer Index",
+    "Serenity Index",
+]
+
+LEGACY_FULL_REPORT_METRICS = [
+    "Start Period",
+    "End Period",
+    "Risk-Free Rate",
+    "Time in Market",
+    "Cumulative Return",
+    "CAGR﹪",
+    "Sharpe",
+    "Prob. Sharpe Ratio",
+    "Smart Sharpe",
+    "Sortino",
+    "Smart Sortino",
+    "Sortino/√2",
+    "Smart Sortino/√2",
+    "Omega",
+    "Max Drawdown",
+    "Longest DD Days",
+    "Volatility (ann.)",
+    "R^2",
+    "Information Ratio",
+    "Calmar",
+    "Skew",
+    "Kurtosis",
+    "Expected Daily",
+    "Expected Monthly",
+    "Expected Yearly",
+    "Kelly Criterion",
+    "Risk of Ruin",
+    "Daily Value-at-Risk",
+    "Expected Shortfall (cVaR)",
+    "Max Consecutive Wins",
+    "Max Consecutive Losses",
+    "Gain/Pain Ratio",
+    "Gain/Pain (1M)",
+    "Payoff Ratio",
+    "Profit Factor",
+    "Common Sense Ratio",
+    "CPC Index",
+    "Tail Ratio",
+    "Outlier Win Ratio",
+    "Outlier Loss Ratio",
+    "MTD",
+    "3M",
+    "6M",
+    "YTD",
+    "1Y",
+    "3Y (ann.)",
+    "5Y (ann.)",
+    "10Y (ann.)",
+    "All-time (ann.)",
+    "Best Day",
+    "Worst Day",
+    "Best Month",
+    "Worst Month",
+    "Best Year",
+    "Worst Year",
+    "Avg. Drawdown",
+    "Avg. Drawdown Days",
+    "Recovery Factor",
+    "Ulcer Index",
+    "Serenity Index",
+    "Avg. Up Month",
+    "Avg. Down Month",
+    "Win Days",
+    "Win Month",
+    "Win Quarter",
+    "Win Year",
+    "Beta",
+    "Alpha",
+    "Correlation",
+    "Treynor Ratio",
+]
+
+
 def assert_close(actual: object, expected: object, rel: float = 1e-9) -> None:
     actual_float = float(cast(SupportsFloat, actual))
     expected_float = float(cast(SupportsFloat, expected))
@@ -324,6 +437,18 @@ def test_basic_report_metrics_match_quantstats_values() -> None:
         assert actual_by_metric[metric]["Strategy"] == str(expected.loc[metric, "Strategy"])
 
 
+def test_basic_report_preserves_legacy_metric_order() -> None:
+    actual = reports.metrics(
+        to_polars_frame(returns_series()),
+        benchmark=to_polars_frame(benchmark_series(), "benchmark"),
+        display=False,
+        mode="basic",
+    )
+
+    assert actual is not None
+    assert actual["Metric"].to_list() == LEGACY_BASIC_REPORT_METRICS
+
+
 def test_full_report_metrics_include_benchmark_relative_rows() -> None:
     pandas_returns = returns_series()
     pandas_benchmark = benchmark_series()
@@ -359,3 +484,15 @@ def test_full_report_metrics_include_benchmark_relative_rows() -> None:
     for metric in ["R^2", "Information Ratio"]:
         assert actual_by_metric[metric]["Benchmark"] == "-"
         assert actual_by_metric[metric]["Strategy"] == str(expected.loc[metric, "Strategy"])
+
+
+def test_full_report_preserves_legacy_metric_order() -> None:
+    actual = reports.metrics(
+        to_polars_frame(returns_series()),
+        benchmark=to_polars_frame(benchmark_series(), "benchmark"),
+        display=False,
+        mode="full",
+    )
+
+    assert actual is not None
+    assert actual["Metric"].to_list() == LEGACY_FULL_REPORT_METRICS
